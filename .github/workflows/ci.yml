@@ -65,9 +65,5 @@ jobs:
 
       - name: Compare
         run: |
-          canon=lyric/tooling/textmate
-          # Transition: until the toolchain's org-split lands, the canonical copy still lives in
-          # the old client directory. Delete the fallback when it does.
-          [ -d "$canon" ] || canon=lyric/tooling/vscode-lyric
-          diff -r syntaxes "$canon/syntaxes"
-          diff language-configuration.json "$canon/language-configuration.json"
+          diff -r syntaxes lyric/tooling/textmate/syntaxes
+          diff language-configuration.json lyric/tooling/textmate/language-configuration.json
