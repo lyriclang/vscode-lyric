@@ -1,0 +1,53 @@
+name: Release
+
+# Runs on an annotated tag vX.Y.Z; the tag is the extension's own version, on its own cadence —
+# the toolchain the extension talks to is versioned in lyriclang/lyric.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Package and publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install the language client
+        run: npm ci --omit=dev
+
+      - name: Check the manifest
+        run: node scripts/check-manifest.mjs
+
+      # The tag names the version the manifest carries. A vsix whose file name and manifest
+      # disagree reports the wrong version in the Extensions view forever after.
+      - name: The tag matches the manifest
+        run: |
+          manifest="$(node -p 'require("./package.json").version')"
+          [ "v${manifest}" = "$GITHUB_REF_NAME" ] || {
+            echo "tag $GITHUB_REF_NAME, but package.json says ${manifest}"; exit 1; }
+
+      - name: Package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          npx --yes @vscode/vsce package --out "dist/vscode-lyric-${version}.vsix"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.vsix \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes

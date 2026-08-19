@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Check and package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install the language client
+        run: npm ci --omit=dev
+
+      - name: Check the manifest
+        run: node scripts/check-manifest.mjs
+
+      # vsce stops on a missing LICENSE with a prompt no CI can answer; the LICENSE is tracked
+      # here, so packaging is the proof that everything vsce needs is in the repository.
+      - name: Package
+        run: npx --yes @vscode/vsce package --out dist/vscode-lyric.vsix
+
+      - name: Upload extension
+        uses: actions/upload-artifact@v7
+        with:
+          name: vscode-lyric
+          path: dist/*.vsix
+          retention-days: 7
+
+  grammar-sync:
+    # The TextMate grammar's canonical home is the toolchain repository, where the test suite
+    # pins it against the lexer — a grammar is a second description of the same language, and two
+    # descriptions drift. This repository carries a working copy; this job is what keeps "copy"
+    # from becoming "fork".
+    name: Grammar matches the canonical copy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Checkout the toolchain
+        uses: actions/checkout@v7
+        with:
+          repository: lyriclang/lyric
+          path: lyric
+          sparse-checkout: tooling
+
+      - name: Compare
+        run: |
+          canon=lyric/tooling/textmate
+          # Transition: until the toolchain's org-split lands, the canonical copy still lives in
+          # the old client directory. Delete the fallback when it does.
+          [ -d "$canon" ] || canon=lyric/tooling/vscode-lyric
+          diff -r syntaxes "$canon/syntaxes"
+          diff language-configuration.json "$canon/language-configuration.json"

@@ -5,7 +5,7 @@
   "version": "1.2.0",
   "publisher": "lyric",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/OIL1I/lyric" },
+  "repository": { "type": "git", "url": "https://github.com/lyriclang/vscode-lyric" },
   "engines": { "vscode": "^1.80.0" },
   "categories": ["Programming Languages"],
 

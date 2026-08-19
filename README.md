@@ -1,6 +1,6 @@
 # Lyric for VS Code
 
-Diagnostics, syntax highlighting and a run command for [Lyric](https://github.com/OIL1I/lyric).
+Diagnostics, syntax highlighting and a run command for [Lyric](https://github.com/lyriclang/lyric).
 
 ## What it does
 
@@ -70,8 +70,11 @@ compiles and runs in a single step.
 
 ## Installing from a release
 
-Every release from v1.8.0 on carries a `vscode-lyric-<version>.vsix` beside the toolchain
-archives. Install it with `Extensions: Install from VSIX…` in the command palette, or:
+Every release of **this repository** carries a `vscode-lyric-<version>.vsix`. The extension is
+versioned on its own cadence — the toolchain it talks to lives in
+[lyriclang/lyric](https://github.com/lyriclang/lyric) and releases separately. (Toolchain
+releases v1.8.0 through v1.9.1 carried the vsix beside the archives; from here on it is found
+here.) Install it with `Extensions: Install from VSIX…` in the command palette, or:
 
 ```bash
 code --install-extension vscode-lyric-<version>.vsix
@@ -93,24 +96,32 @@ restart:
 
 ```bash
 # Linux/macOS
-ln -s "$PWD/tooling/vscode-lyric" ~/.vscode/extensions/vscode-lyric
+ln -s "$PWD" ~/.vscode/extensions/vscode-lyric
 ```
 
 ```powershell
-New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.vscode\extensions\vscode-lyric" -Target "$PWD\tooling\vscode-lyric"
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.vscode\extensions\vscode-lyric" -Target "$PWD"
 ```
 
 Nothing is compiled or bundled: the grammar is JSON and the extension is a single JavaScript file,
 both loaded as they are. `npm install` only fetches `vscode-languageclient`. Packaging with `vsce`
 comes when there is something to publish.
 
-## The grammar is tested
+## The grammar and the manifest are tested
 
-`tests/Lyric.Tests.Cli/GrammarTests.cs` compares the keyword list in
-`syntaxes/lyric.tmLanguage.json` against the lexer — in **both** directions. A grammar is a second
-description of the same language, and two descriptions drift; if Lyric gains a keyword and the
-grammar does not, the test fails rather than the editor silently treating it as an identifier.
+The TextMate grammar's **canonical home is the toolchain repository** — `tooling/textmate` in
+[lyriclang/lyric](https://github.com/lyriclang/lyric), where `GrammarTests.cs` compares its
+keyword list against the lexer in **both** directions. A grammar is a second description of the
+same language, and two descriptions drift; if Lyric gains a keyword and the grammar does not,
+that test fails rather than the editor silently treating it as an identifier. The copy in this
+repository is what the extension loads; the `grammar-sync` CI job keeps it identical to the
+canonical one.
 
-The server is tested in `tests/Lyric.Tests.Lsp/`, against the protocol rather than against the
-editor: framing, the lifecycle state machine, the URI conversion, and the agreement between what
-the server publishes and what the compiler reports for the same text.
+The manifest is checked by `scripts/check-manifest.mjs` (run by CI and before every release):
+every path it names exists, grammar and language agree on the scope, every key binding points at
+a declared command, and the run command keeps calling the driver — quoted, with the PowerShell
+call operator.
+
+The server is tested in the toolchain's `tests/Lyric.Tests.Lsp/`, against the protocol rather
+than against the editor: framing, the lifecycle state machine, the URI conversion, and the
+agreement between what the server publishes and what the compiler reports for the same text.
