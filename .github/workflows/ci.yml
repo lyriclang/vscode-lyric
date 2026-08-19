@@ -31,8 +31,11 @@ jobs:
 
       # vsce stops on a missing LICENSE with a prompt no CI can answer; the LICENSE is tracked
       # here, so packaging is the proof that everything vsce needs is in the repository.
+      # It does not create the output directory itself.
       - name: Package
-        run: npx --yes @vscode/vsce package --out dist/vscode-lyric.vsix
+        run: |
+          mkdir -p dist
+          npx --yes @vscode/vsce package --out dist/vscode-lyric.vsix
 
       - name: Upload extension
         uses: actions/upload-artifact@v7
