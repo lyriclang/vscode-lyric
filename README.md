@@ -1,6 +1,6 @@
 # Lyric for VS Code
 
-Diagnostics, syntax highlighting and a run command for [Lyric](https://github.com/lyriclang/lyric).
+Diagnostics, syntax highlighting, a run command and a debugger for [Lyric](https://github.com/lyriclang/lyric).
 
 ## What it does
 
@@ -53,7 +53,7 @@ standard library declares is refused with the reason.
 
 ## Setup
 
-The extension calls two binaries from your `PATH`. If the toolchain lives elsewhere, point at the
+The extension calls three binaries from your `PATH`. If the toolchain lives elsewhere, point at the
 driver and the server is found beside it:
 
 ```json

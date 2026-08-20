@@ -1,8 +1,8 @@
 {
   "name": "vscode-lyric",
   "displayName": "Lyric",
-  "description": "Language support for Lyric: project-wide diagnostics, navigation, rename, semantic highlighting, build tasks and a run command.",
-  "version": "1.2.0",
+  "description": "Language support for Lyric: project-wide diagnostics, navigation, rename, semantic highlighting, build tasks, a run command and a debugger.",
+  "version": "1.3.0",
   "publisher": "lyric",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/lyriclang/vscode-lyric" },
@@ -68,6 +68,58 @@
       }
     ],
 
+    "breakpoints": [{ "language": "lyric" }],
+
+    "debuggers": [
+      {
+        "type": "lyric",
+        "label": "Lyric",
+        "languages": ["lyric"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The .lyr file to debug (or a built .lyrbc). A source file is compiled by the debugger itself, unoptimized, so what runs is what the editor shows.",
+                "default": "${file}"
+              },
+              "args": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Arguments handed to main(args: string[]).",
+                "default": []
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stop on the first line of main.",
+                "default": false
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "lyric",
+            "request": "launch",
+            "name": "Debug current file",
+            "program": "${file}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Lyric: Debug current file",
+            "body": {
+              "type": "lyric",
+              "request": "launch",
+              "name": "Debug current file",
+              "program": "^\"\\${file}\""
+            }
+          }
+        ]
+      }
+    ],
+
     "taskDefinitions": [
       {
         "type": "lyric",
@@ -110,6 +162,11 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Path to `lyrls`, the language server that produces the diagnostics.\n\nLeft empty it is looked for beside `#lyric.executable#` when that is a full path, and on your `PATH` otherwise — so in the usual case configuring the driver configures both."
+        },
+        "lyric.debugAdapter": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to `lyrdbg`, the debug adapter behind F5.\n\nLeft empty it is looked for beside `#lyric.executable#` when that is a full path, and on your `PATH` otherwise — the same rule the language server follows."
         },
         "lyric.diagnostics.enable": {
           "type": "boolean",

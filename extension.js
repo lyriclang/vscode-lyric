@@ -240,6 +240,63 @@ function scheduleRestart() {
 }
 
 /**
+ * Where `lyrdbg` lives: the same three-step rule as for `lyrls` — the explicit setting, then
+ * beside a fully-qualified driver, then the PATH. One installation, one setting.
+ */
+function adapterCommand() {
+    const configuration = vscode.workspace.getConfiguration("lyric");
+
+    const configured = (configuration.get("debugAdapter", "") || "").trim();
+    if (configured !== "") {
+        return configured;
+    }
+
+    const driver = (configuration.get("executable", "lyric") || "lyric").trim();
+    if (path.isAbsolute(driver)) {
+        const suffix = process.platform === "win32" ? ".exe" : "";
+        return path.join(path.dirname(driver), `lyrdbg${suffix}`);
+    }
+
+    return "lyrdbg";
+}
+
+/**
+ * F5 without a launch.json debugs the active file. The adapter compiles from DISK, so a dirty
+ * buffer is saved first — the same rule the run command applies, for the same reason: without it
+ * the previous version runs, and under a debugger that is maximally confusing.
+ */
+const debugConfigurationProvider = {
+    async resolveDebugConfiguration(_folder, configuration) {
+        if (!configuration.program) {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || editor.document.languageId !== "lyric") {
+                vscode.window.showErrorMessage("Lyric: no .lyr file is active to debug.");
+                return undefined;
+            }
+            configuration.type = "lyric";
+            configuration.request = "launch";
+            configuration.name = "Debug current file";
+            configuration.program = editor.document.fileName;
+        }
+
+        const editors = vscode.window.visibleTextEditors.filter(
+            (e) => e.document.languageId === "lyric" && e.document.isDirty
+        );
+        for (const editor of editors) {
+            await editor.document.save();
+        }
+
+        return configuration;
+    },
+};
+
+const debugAdapterFactory = {
+    createDebugAdapterDescriptor() {
+        return new vscode.DebugAdapterExecutable(adapterCommand(), []);
+    },
+};
+
+/**
  * The build task: the project's own build.lyr, run by the driver, with the problem matcher
  * reading the compiler's diagnostics into the Problems panel.
  *
@@ -344,6 +401,13 @@ function activate(context) {
     );
 
     context.subscriptions.push(vscode.tasks.registerTaskProvider("lyric", taskProvider));
+
+    context.subscriptions.push(
+        vscode.debug.registerDebugConfigurationProvider("lyric", debugConfigurationProvider)
+    );
+    context.subscriptions.push(
+        vscode.debug.registerDebugAdapterDescriptorFactory("lyric", debugAdapterFactory)
+    );
 }
 
 function deactivate() {
