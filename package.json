@@ -1,8 +1,8 @@
 {
   "name": "vscode-lyric",
   "displayName": "Lyric",
-  "description": "Language support for Lyric: project-wide diagnostics, navigation, rename, semantic highlighting, build tasks, a run command and a debugger.",
-  "version": "1.3.0",
+  "description": "Language support for Lyric: project-wide diagnostics, navigation, rename, semantic highlighting, build tasks, a run command, and a debugger that launches a file or attaches to a running host.",
+  "version": "1.4.0",
   "publisher": "lyric",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/lyriclang/vscode-lyric" },
@@ -96,6 +96,20 @@
                 "default": false
               }
             }
+          },
+          "attach": {
+            "required": ["port"],
+            "properties": {
+              "port": {
+                "type": "number",
+                "description": "The port the host serves its debug adapter on. The host runs the program and speaks the protocol from inside its own process; nothing is compiled or started here."
+              },
+              "host": {
+                "type": "string",
+                "description": "Where that port is.",
+                "default": "127.0.0.1"
+              }
+            }
           }
         },
         "initialConfigurations": [
@@ -114,6 +128,15 @@
               "request": "launch",
               "name": "Debug current file",
               "program": "^\"\\${file}\""
+            }
+          },
+          {
+            "label": "Lyric: Attach to a running host",
+            "body": {
+              "type": "lyric",
+              "request": "attach",
+              "name": "Attach to a running host",
+              "port": 4711
             }
           }
         ]
