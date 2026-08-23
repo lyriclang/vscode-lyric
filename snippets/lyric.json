@@ -41,7 +41,7 @@
     },
     "For-in loop": {
         "prefix": "for",
-        "body": ["for ${1:item} in ${2:items} {", "    $0", "}"],
+        "body": ["for (${1:item} in ${2:items}) {", "    $0", "}"],
         "description": "Iterate over a range, array or iterable"
     },
     "While loop": {

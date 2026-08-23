@@ -267,6 +267,19 @@ function adapterCommand() {
  */
 const debugConfigurationProvider = {
     async resolveDebugConfiguration(_folder, configuration) {
+        // Attaching debugs a program a host is ALREADY running. Nothing is compiled and nothing is
+        // started, so there is no file to save and no program to name — the whole configuration is
+        // where to connect.
+        if (configuration.request === "attach") {
+            if (!configuration.port) {
+                vscode.window.showErrorMessage(
+                    "Lyric: an attach configuration needs the port its host serves the adapter on."
+                );
+                return undefined;
+            }
+            return configuration;
+        }
+
         if (!configuration.program) {
             const editor = vscode.window.activeTextEditor;
             if (!editor || editor.document.languageId !== "lyric") {
@@ -290,8 +303,22 @@ const debugConfigurationProvider = {
     },
 };
 
+/**
+ * Which adapter serves a session, and the two are not the same program.
+ *
+ * A launch starts `lyrdbg`, which compiles and runs the file. An attach connects to a host that is
+ * already running one: there the adapter lives INSIDE that process, next to the program it is
+ * debugging, and the only thing this end contributes is the socket.
+ */
 const debugAdapterFactory = {
-    createDebugAdapterDescriptor() {
+    createDebugAdapterDescriptor(session) {
+        if (session.configuration.request === "attach") {
+            return new vscode.DebugAdapterServer(
+                session.configuration.port,
+                session.configuration.host || "127.0.0.1"
+            );
+        }
+
         return new vscode.DebugAdapterExecutable(adapterCommand(), []);
     },
 };

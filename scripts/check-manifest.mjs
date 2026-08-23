@@ -91,5 +91,19 @@ check(code.includes("powershell"), "'powershell' is not recognised as PowerShell
 check(code.includes("isDirty"), "the run command does not look at isDirty");
 check(code.includes("save()"), "the run command does not save the buffer");
 
+// The two debug shapes are two different adapters, and confusing them is silent: a launch starts
+// lyrdbg, an attach connects to the adapter that lives inside the host already running the
+// program. An 'attach' declared in the manifest with no socket descriptor behind it starts a
+// second, empty debugger and waits for a program nobody launched.
+check(contributes.debuggers.length === 1, "exactly one debugger is expected");
+const attributes = contributes.debuggers[0].configurationAttributes;
+for (const request of ["launch", "attach"]) {
+    check(request in attributes, `the debugger declares no '${request}' configuration`);
+}
+check((attributes.attach?.required ?? []).includes("port"),
+    "an attach configuration without a port has nothing to connect to");
+check(code.includes("DebugAdapterServer"), "nothing connects to a socket, so attach cannot work");
+check(code.includes("DebugAdapterExecutable"), "nothing starts the adapter, so launch cannot work");
+
 if (failures > 0) process.exit(1);
 console.log("manifest checks passed");

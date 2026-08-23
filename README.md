@@ -44,6 +44,35 @@ Diagnostics, syntax highlighting, a run command and a debugger for [Lyric](https
   same from the palette: the way out of a hung or freshly updated server that does not cost a
   window reload.
 
+## Debugging
+
+**F5** debugs the `.lyr` file in front of you: breakpoints in the gutter, step over, into and out,
+the call stack with source lines, locals and globals under their names, and hover evaluation. A
+`launch.json` is only needed to pass arguments or to pin a file. What runs is compiled by the
+adapter itself, unoptimized and with debug info — the program the editor shows rather than the
+optimizer's version of it.
+
+**Attaching** debugs a program already running inside a host — a game, an editor, anything
+embedding the VM. The host serves the adapter from its own process over a socket it opened, and
+this end only connects:
+
+```json
+{
+    "type": "lyric",
+    "request": "attach",
+    "name": "Attach to the running host",
+    "port": 4711
+}
+```
+
+Nothing is compiled and nothing is started: a breakpoint set here binds against the program as it
+runs and takes effect the next time execution reaches that line. Disconnecting gives the program
+back — the breakpoints go and a parked thread is released, so the host runs on without a debugger
+holding it. It needs a host built against the toolchain's `DapServer`, from 2.9.0 on.
+
+Evaluation answers **names, not expressions** — `v.x` and `player.pos.y`, not `v.x + 1` — and for
+the same reason a breakpoint carries no condition.
+
 ## What it does not do
 
 A generic call shows the **declared** signature rather than the instantiated one — the
