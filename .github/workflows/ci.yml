@@ -45,25 +45,50 @@ jobs:
           retention-days: 7
 
   grammar-sync:
-    # The TextMate grammar's canonical home is the toolchain repository, where the test suite
-    # pins it against the lexer — a grammar is a second description of the same language, and two
-    # descriptions drift. This repository carries a working copy; this job is what keeps "copy"
-    # from becoming "fork".
-    name: Grammar matches the canonical copy
+    # The TextMate grammar is made by tree-sitter-lyric from its grammar (script/textmate.py), so
+    # that the words and the literal forms have one account; this repository carries the file
+    # that script writes, and this job keeps the copy from becoming a fork.
+    name: Grammar is tree-sitter-lyric's
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Checkout the toolchain
+      - name: Checkout tree-sitter-lyric
         uses: actions/checkout@v7
         with:
-          repository: lyriclang/lyric
-          path: lyric
-          sparse-checkout: tooling
+          repository: lyriclang/tree-sitter-lyric
+          path: tree-sitter-lyric
+          sparse-checkout: textmate
 
       - name: Compare
+        run: diff syntaxes/lyric.tmLanguage.json tree-sitter-lyric/textmate/lyric.tmLanguage.json
+
+  snippets:
+    # A snippet is Lyric nothing loads until someone types its prefix: each one, filled with its
+    # defaults, must pass the toolchain's 'check' — the one of the dev channel, built from main.
+    name: Snippets check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: The toolchain of the dev channel
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          diff -r syntaxes lyric/tooling/textmate/syntaxes
-          diff language-configuration.json lyric/tooling/textmate/language-configuration.json
+          mkdir -p "$RUNNER_TEMP/lyric" && cd "$RUNNER_TEMP/lyric"
+          gh release download dev --repo lyriclang/lyric --pattern '*-linux-x64.tar.gz' --pattern SHA256SUMS
+          grep -- '-linux-x64.tar.gz' SHA256SUMS | sha256sum -c -
+          tar -xzf ./*-linux-x64.tar.gz
+          echo "LYRIC=$(find "$RUNNER_TEMP/lyric" -name lyric5 -type f | head -1)" >> "$GITHUB_ENV"
+
+      - name: Check
+        run: node scripts/check-snippets.mjs "$LYRIC"

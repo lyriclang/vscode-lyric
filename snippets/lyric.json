@@ -1,13 +1,18 @@
 {
     "Function": {
         "prefix": "fn",
-        "body": ["fn ${1:name}(${2}): ${3:int} {", "    $0", "}"],
+        "body": ["fn ${1:name}(${2}): ${3:void} {", "    $0", "}"],
         "description": "A function declaration"
     },
     "Main function": {
         "prefix": "main",
-        "body": ["fn main(): int {", "    $0", "    return 0;", "}"],
+        "body": ["fn main(): void {", "    $0", "}"],
         "description": "The entry point"
+    },
+    "Test": {
+        "prefix": "test",
+        "body": ["@Test", "fn ${1:name}(): void {", "    $0", "}"],
+        "description": "A test: lyric test runs it, and the editor puts Run and Debug above it"
     },
     "Struct": {
         "prefix": "struct",
@@ -16,7 +21,7 @@
     },
     "Class": {
         "prefix": "class",
-        "body": ["class ${1:Name} {", "    ${2:field}: ${3:int},$0", "}"],
+        "body": ["class ${1:Name} {", "    var ${2:field}: ${3:int} = ${4:0},$0", "}"],
         "description": "A class declaration"
     },
     "Enum": {
@@ -34,9 +39,9 @@
         "body": ["extend ${1:Type} {", "    $0", "}"],
         "description": "An extension block"
     },
-    "Match expression": {
+    "Match": {
         "prefix": "match",
-        "body": ["match (${1:value}) {", "    ${2:Pattern} => ${3:0},$0", "}"],
+        "body": ["match (${1:value}) {", "    ${2:_} => {$0}", "}"],
         "description": "A match with one arm to start from"
     },
     "For-in loop": {
@@ -56,12 +61,12 @@
     },
     "Import": {
         "prefix": "import",
-        "body": ["import ${1:module};"],
+        "body": ["import ${1:std.io};"],
         "description": "Import a module"
     },
     "Selective import": {
         "prefix": "importsel",
-        "body": ["import ${1:module} { ${2:name} };"],
+        "body": ["import ${1:std.io} { ${2:println} };"],
         "description": "Import selected names from a module"
     }
 }

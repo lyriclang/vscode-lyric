@@ -60,24 +60,19 @@ for (const items of Object.values(contributes.menus)) {
     for (const item of items) mustBeDeclared(item);
 }
 
-// The run command calls the driver and not a tool: the driver is the one command that compiles
-// AND runs. Were the extension to call 'lyrc', the user would get a .lyrbc rather than a run;
-// were it to call 'lyrvm', it would fail on a source file.
-// The CALL LINE is checked rather than the file: comments beside it name the tools explicitly to
-// explain why they are not it, and a check scanning the whole file trips over the explanation.
+// The run command calls the toolchain's 'run'. The CALL LINE is checked rather than the file: a
+// check scanning the whole file trips over the comments that explain it.
 const code = readFileSync(join(root, "extension.js"), "utf8");
 const callLines = code.split("\n").filter(line => line.includes("sendText"));
 check(callLines.length === 1, "exactly one line is expected to call sendText");
 const call = callLines[0] ?? "";
 check(call.includes(" run "), "the call line does not run the file");
-check(!call.includes("lyrc"), "the call line names 'lyrc' — the driver is the one to call");
-check(!call.includes("lyrvm"), "the call line names 'lyrvm' — the driver is the one to call");
 
 // The command is QUOTED and called with an '&' in PowerShell — both together, because each alone
 // is broken. Without the quoting 'C:\Program Files\lyric\lyric.exe' fails at 'C:\Program';
 // without the '&', '"lyric" run x' is a string literal in PowerShell that gets printed rather
 // than executed, so the run simply did not happen.
-check(call.includes("quote(executable)"), "the executable is not quoted on the call line");
+check(call.includes("quote(executable())"), "the executable is not quoted on the call line");
 check(call.includes("callPrefix()"), "the call line lost the PowerShell call operator");
 
 // And the '&' applies to PowerShell only: in cmd.exe and every POSIX shell it would be a syntax
@@ -91,19 +86,31 @@ check(code.includes("powershell"), "'powershell' is not recognised as PowerShell
 check(code.includes("isDirty"), "the run command does not look at isDirty");
 check(code.includes("save()"), "the run command does not save the buffer");
 
-// The two debug shapes are two different adapters, and confusing them is silent: a launch starts
-// lyrdbg, an attach connects to the adapter that lives inside the host already running the
-// program. An 'attach' declared in the manifest with no socket descriptor behind it starts a
-// second, empty debugger and waits for a program nobody launched.
+// One binary is the toolchain: the server is 'lyric lsp', the debugger 'lyric dap'. Lyric 4's
+// separate tools are gone, and a client starting one of them starts nothing.
+check(code.includes('args: ["lsp"]'), "the language server is not started as 'lyric lsp'");
+check(code.includes('DebugAdapterExecutable(executable(), ["dap"])'), "the debugger is not started as 'lyric dap'");
+for (const gone of ["lyrls", "lyrdbg", "lyric.languageServer", "lyric.debugAdapter"]) {
+    check(!code.includes(gone), `the extension still names '${gone}'`);
+}
+
+// Both requests go to the one adapter: a launch builds what it names, an attach is lldb's.
 check(contributes.debuggers.length === 1, "exactly one debugger is expected");
 const attributes = contributes.debuggers[0].configurationAttributes;
 for (const request of ["launch", "attach"]) {
     check(request in attributes, `the debugger declares no '${request}' configuration`);
 }
-check((attributes.attach?.required ?? []).includes("port"),
-    "an attach configuration without a port has nothing to connect to");
-check(code.includes("DebugAdapterServer"), "nothing connects to a socket, so attach cannot work");
-check(code.includes("DebugAdapterExecutable"), "nothing starts the adapter, so launch cannot work");
+check("test" in (attributes.launch?.properties ?? {}), "a launch cannot name a test, which the Debug lens needs");
+
+// The server's lenses name commands the client runs: each must be registered here, or the lens
+// is a button that does nothing.
+for (const command of ["lyric.runTest", "lyric.debugTest"]) {
+    check(declared.has(command), `'${command}' is not a declared command`);
+    check(code.includes(`registerCommand("${command}"`), `'${command}' is not registered`);
+}
+// 'lyric.expand' is the server's, registered by the language client from its capabilities: one
+// registered here too would collide with it.
+check(!code.includes('registerCommand("lyric.expand"'), "'lyric.expand' is the server's command, not the client's");
 
 if (failures > 0) process.exit(1);
 console.log("manifest checks passed");

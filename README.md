@@ -1,89 +1,73 @@
 # Lyric for VS Code
 
-Diagnostics, syntax highlighting, a run command and a debugger for [Lyric](https://github.com/lyriclang/lyric).
+Language support for [Lyric](https://github.com/lyriclang/lyric) 5: the toolchain's language
+server, a run command, build tasks and a debugger. From 2.0.0 the extension speaks to Lyric 5's
+one binary — `lyric lsp` and `lyric dap`; Lyric 4's `lyrls` and `lyrdbg` belong to
+[Lyric-Script](https://github.com/lyriclang/lyric-script), and 1.4.0 is the release for them.
+
+The extension knows nothing about Lyric the server does not say: it starts the toolchain,
+forwards the open buffers and shows what comes back. The compiler is the only thing that decides
+what is wrong with a program.
 
 ## What it does
 
-- **Diagnostics** while you type — for the whole project. Under a `lyric.json`, every `.lyr` file
-  beneath the source root is compiled as one program: an edit that breaks a file you do not have
-  open puts the error in the Problems panel all the same, and a change on disk behind the editor —
-  a branch switch, another tool — is picked up through the file watcher. A file outside any
-  project is compiled from itself, as before.
-- **Hover** over a name to see what the compiler thinks it is: the binding form and type of a
-  local, a parameter's type, a function's signature — and the `///` documentation written above
-  the declaration. It keeps answering while the buffer does not parse, from the last analysis that
-  got through.
-- **Go to definition** (`F12`) on a name, including into the standard library — those files are
-  read from disk, so the jump opens the real `.lyr` source and selects the name.
-- **Find references** (`Shift+F12`) across the project, in both directions: standing on a
-  declaration finds the uses in files that import this one.
-- **Rename** (`F2`) across the project — declaration, uses, and the `import` clauses that carry
-  the name. What cannot be renamed says why: the standard library, a module, a file outside any
-  project whose rename would leave the file. Whether the NEW name collides with something is left
-  to the compile that follows immediately — its diagnostics are the conflict analysis.
-- **Completion** after `.` and for names in scope, an **outline** of the file's declarations, and
-  **workspace symbols** (`Ctrl+T`): every declaration of the project, searched by name.
-- **Signature help** while you type a call — the declaration as written, the active parameter
-  following your commas. **Folding** for declarations, blocks and matches, with the closing line
-  kept visible. **Inlay hints** show the inferred type of a `let`/`var` without an annotation and
-  of every loop variable; a written annotation silences the hint.
-- **Highlighting** in two layers. The TextMate grammar colors what is lexical — keywords, strings
-  with interpolation, nested block comments, all numeric literal forms. On top, **semantic
-  tokens** from the server color every name by what the compiler resolved it to: a type in an
-  annotation, an initializer and an attribute alike; fields, methods, parameters, `let` bindings
-  as readonly. A name the compiler cannot resolve stays uncolored, which is the honest signal.
-- **Run** the active file with `Ctrl+F5`, the play button in the editor title bar, or the
-  command palette (`Lyric: Run File`).
-- **Build** the project through the task system (`Terminal → Run Build Task`): a folder with a
-  `lyric.json` offers `lyric: build`, which runs the project's `build.lyr` and feeds the
-  compiler's diagnostics into the Problems panel through the `$lyric` problem matcher.
-- **Snippets** for the declaration forms — `fn`, `struct`, `enum`, `match` and friends — written
-  against the grammar, not against habit.
-- A **status item** in the language status area says whether the server is running, which version,
-  and — when a start failed — that clicking it retries. `Lyric: Restart Language Server` does the
-  same from the palette: the way out of a hung or freshly updated server that does not cost a
-  window reload.
+- **Diagnostics** while you type, for the whole package — the one of the nearest `lyric.toml`;
+  a file outside any package is a script of its own. A finding links to its page in the
+  diagnostics reference.
+- **Quick fixes** for what the compiler suggests a change for — a lint's mechanical correction, a
+  deprecated name's replacement — and an `@Allow` above the declaration for a lint.
+- **Formatting** (`Shift+Alt+F`) as `lyric fmt` does it, sent as the lines that change.
+- **Hover**, **go to definition** — into the standard library too —, **find references** and
+  **rename** across the packages of the workspace, **completion**, the **outline**, **workspace
+  symbols**, **signature help**, **folding** and **inlay hints**.
+- **Test lenses**: above every `@Test` and doc-test, **Run test** runs `lyric test -f <name>` in
+  the package's directory as a task, its failures in the Problems panel; **Debug test** debugs
+  that test.
+- **Lyric: Show the File with Its Macros Expanded** opens the module as the compiler reads it
+  after its macros, beside the file.
+- **Highlighting** in two layers: the TextMate grammar colors what is lexical — it is made from
+  [tree-sitter-lyric](https://github.com/lyriclang/tree-sitter-lyric)'s grammar, so the two say
+  the same —, and the server's **semantic tokens** color every name by what the compiler resolved
+  it to.
+- **Run** with `Ctrl+F5`: the package of the active file, or the file where it belongs to none.
+- **Build** through the task system: a folder with a `lyric.toml` offers `lyric: build`, the
+  compiler's diagnostics in the Problems panel.
+- **Snippets** for the declaration forms, a test, `match` and the loops — each checked against
+  the toolchain's `check` in CI.
+- A **status item** says whether the server runs and which version; clicking it after a failed
+  start retries, as `Lyric: Restart Language Server` does.
 
 ## Debugging
 
-**F5** debugs the `.lyr` file in front of you: breakpoints in the gutter, step over, into and out,
-the call stack with source lines, locals and globals under their names, and hover evaluation. A
-`launch.json` is only needed to pass arguments or to pin a file. What runs is compiled by the
-adapter itself, unoptimized and with debug info — the program the editor shows rather than the
-optimizer's version of it.
+**F5** debugs the package of the active file — or the file, where it belongs to none. The adapter,
+`lyric dap`, builds what the launch names in the debug profile and hands the rest to **lldb-dap**:
+breakpoints with conditions, logpoints, stepping, threads. A frame is shown by its Lyric name at
+its Lyric line, a local by its Lyric name, a string as its text, an array by its elements, an
+optional and an enum by what they hold.
 
-**Attaching** debugs a program already running inside a host — a game, an editor, anything
-embedding the VM. The host serves the adapter from its own process over a socket it opened, and
-this end only connects:
+A **panic** stops the program where it happens: the exception filter **Panic**, on by default.
 
 ```json
 {
     "type": "lyric",
-    "request": "attach",
-    "name": "Attach to the running host",
-    "port": 4711
+    "request": "launch",
+    "name": "Debug the package",
+    "program": "${workspaceFolder}",
+    "args": []
 }
 ```
 
-Nothing is compiled and nothing is started: a breakpoint set here binds against the program as it
-runs and takes effect the next time execution reaches that line. Disconnecting gives the program
-back — the breakpoints go and a parked thread is released, so the host runs on without a debugger
-holding it. It needs a host built against the toolchain's `DapServer`, from 2.9.0 on.
+`test` in a launch debugs the package's tests whose names hold it — what the Debug lens sets.
+**Attaching** is lldb's: to a process by `pid` (`${command:pickProcess}`), or with `waitFor` to the
+next one `program` starts.
 
-Evaluation answers **names, not expressions** — `v.x` and `player.pos.y`, not `v.x + 1` — and for
-the same reason a breakpoint carries no condition.
-
-## What it does not do
-
-A generic call shows the **declared** signature rather than the instantiated one — the
-substitution is private to the type checker, and a second one in the server would be a second
-answer to what `T` became. Renaming a module, an enum variant's payload field, or anything the
-standard library declares is refused with the reason.
+The debugger needs **lldb-dap** — LLVM's, or Xcode's on macOS. `lyric dap` finds it on the
+`PATH` (`lldb-dap`, `lldb-dap-<version>`) or where `LYRIC_LLDB_DAP` names it. On Windows it is
+measured, not promised.
 
 ## Setup
 
-The extension calls three binaries from your `PATH`. If the toolchain lives elsewhere, point at the
-driver and the server is found beside it:
+The extension calls one program, `lyric`, from your `PATH`. Elsewhere, point at it:
 
 ```json
 {
@@ -91,19 +75,17 @@ driver and the server is found beside it:
 }
 ```
 
-`lyric.languageServer` overrides that lookup when the two do not live together, and
-`lyric.diagnostics.enable` turns the server off, leaving highlighting and `Ctrl+F5` in place.
-
-The run command calls the **driver**, not `lyrc` or `lyrvm` — the driver is the one command that
-compiles and runs in a single step.
+Until Lyric 5.0 is released, the binary of the dev channel
+([the `dev` release](https://github.com/lyriclang/lyric/releases/tag/dev)) is called `lyric5`:
+point `lyric.executable` at it. `lyric.diagnostics.enable` turns the server off, leaving
+highlighting and `Ctrl+F5` in place.
 
 ## Installing from a release
 
 Every release of **this repository** carries a `vscode-lyric-<version>.vsix`. The extension is
 versioned on its own cadence — the toolchain it talks to lives in
-[lyriclang/lyric](https://github.com/lyriclang/lyric) and releases separately. (Toolchain
-releases v1.8.0 through v1.9.1 carried the vsix beside the archives; from here on it is found
-here.) Install it with `Extensions: Install from VSIX…` in the command palette, or:
+[lyriclang/lyric](https://github.com/lyriclang/lyric) and releases separately. Install it with
+`Extensions: Install from VSIX…` in the command palette, or:
 
 ```bash
 code --install-extension vscode-lyric-<version>.vsix
@@ -113,15 +95,14 @@ The extension is not on the Marketplace; the release asset is the distribution.
 
 ## Installing during development
 
-There is now a build step. The extension has exactly one dependency, the language client, and it
-has to be present before VS Code loads the extension:
+The extension has one dependency, the language client, which has to be present before VS Code
+loads it:
 
 ```bash
 npm install
 ```
 
-VS Code loads extensions from `~/.vscode/extensions`. Symlink or copy this directory there and
-restart:
+Then symlink or copy this directory into `~/.vscode/extensions` and restart:
 
 ```bash
 # Linux/macOS
@@ -132,25 +113,16 @@ ln -s "$PWD" ~/.vscode/extensions/vscode-lyric
 New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.vscode\extensions\vscode-lyric" -Target "$PWD"
 ```
 
-Nothing is compiled or bundled: the grammar is JSON and the extension is a single JavaScript file,
-both loaded as they are. `npm install` only fetches `vscode-languageclient`. Packaging with `vsce`
-comes when there is something to publish.
+Nothing is compiled or bundled: the grammar is JSON and the extension one JavaScript file.
 
-## The grammar and the manifest are tested
+## What CI checks
 
-The TextMate grammar's **canonical home is the toolchain repository** — `tooling/textmate` in
-[lyriclang/lyric](https://github.com/lyriclang/lyric), where `GrammarTests.cs` compares its
-keyword list against the lexer in **both** directions. A grammar is a second description of the
-same language, and two descriptions drift; if Lyric gains a keyword and the grammar does not,
-that test fails rather than the editor silently treating it as an identifier. The copy in this
-repository is what the extension loads; the `grammar-sync` CI job keeps it identical to the
-canonical one.
+- `scripts/check-manifest.mjs`: every path the manifest names exists, grammar and language agree
+  on the scope, every key binding and menu entry points at a declared command, the commands the
+  server's lenses name are registered, the server is `lyric lsp` and the debugger `lyric dap`,
+  and the run command stays quoted with PowerShell's call operator.
+- `grammar-sync`: `syntaxes/lyric.tmLanguage.json` is the file tree-sitter-lyric makes.
+- `snippets`: each snippet, filled with its defaults, passes `lyric check` of the dev channel
+  (`scripts/check-snippets.mjs`).
 
-The manifest is checked by `scripts/check-manifest.mjs` (run by CI and before every release):
-every path it names exists, grammar and language agree on the scope, every key binding points at
-a declared command, and the run command keeps calling the driver — quoted, with the PowerShell
-call operator.
-
-The server is tested in the toolchain's `tests/Lyric.Tests.Lsp/`, against the protocol rather
-than against the editor: framing, the lifecycle state machine, the URI conversion, and the
-agreement between what the server publishes and what the compiler reports for the same text.
+The server and the adapter are tested in the toolchain, against the protocol.
