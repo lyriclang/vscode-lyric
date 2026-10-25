@@ -2,7 +2,8 @@
 //
 // The parts that need no code are declared in package.json: the TextMate grammar, the snippets,
 // the problem matcher. The code here is the run command, the build task provider, a status item,
-// and a client for `lyrls` — which is where everything language-aware happens.
+// the commands the server's lenses name, and the two processes of the toolchain it starts:
+// `lyric lsp`, where everything language-aware happens, and `lyric dap`, the debugger.
 //
 // Nothing about the language is computed here. The client starts the server, forwards the open
 // buffers to it and renders what comes back — the compiler is the only thing that decides what
@@ -49,6 +50,32 @@ function quote(path) {
 function callPrefix() {
     const shell = (vscode.env.shell || "").toLowerCase();
     return /(^|[\\/])(pwsh|powershell)(\.exe)?$/.test(shell) ? "& " : "";
+}
+
+/**
+ * The toolchain: one binary, `lyric`, whose verbs are the compiler, the language server and the
+ * debug adapter alike. One setting names it.
+ */
+function executable() {
+    return (vscode.workspace.getConfiguration("lyric").get("executable", "lyric") || "lyric").trim();
+}
+
+/**
+ * The package a file belongs to: the directory of the nearest `lyric.toml` at or above it, or
+ * null for a file of its own — which the toolchain builds as a script.
+ */
+function packageOf(file) {
+    let dir = path.dirname(file);
+    for (;;) {
+        if (fs.existsSync(path.join(dir, "lyric.toml"))) {
+            return dir;
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) {
+            return null;
+        }
+        dir = parent;
+    }
 }
 
 /** The running language client, or null when diagnostics are off or the server did not start. */
@@ -113,12 +140,8 @@ let restartTimer = null;
  */
 const RestartDelayMs = 750;
 
-/**
- * The settings that decide what the server is and whether it runs. `lyric.executable` is among
- * them because it is where the server is looked for when its own setting is empty.
- */
+/** The settings that decide what the server is and whether it runs. */
 const ServerSettings = [
-    "lyric.languageServer",
     "lyric.executable",
     "lyric.diagnostics.enable",
 ];
@@ -128,33 +151,7 @@ function diagnosticsEnabled() {
 }
 
 /**
- * Where `lyrls` lives.
- *
- * An explicit setting wins. Otherwise it is looked for NEXT TO the configured driver, because the
- * two ship in one directory — that way pointing `lyric.executable` at an installation configures
- * both, which is the case that would otherwise need two settings saying the same thing.
- *
- * The fallback is the bare name, which leaves the lookup to `PATH`.
- */
-function serverCommand() {
-    const configuration = vscode.workspace.getConfiguration("lyric");
-
-    const configured = (configuration.get("languageServer", "") || "").trim();
-    if (configured !== "") {
-        return configured;
-    }
-
-    const driver = (configuration.get("executable", "lyric") || "lyric").trim();
-    if (path.isAbsolute(driver)) {
-        const suffix = process.platform === "win32" ? ".exe" : "";
-        return path.join(path.dirname(driver), `lyrls${suffix}`);
-    }
-
-    return "lyrls";
-}
-
-/**
- * Starts the server and connects it to every `.lyr` buffer.
+ * Starts `lyric lsp` and connects it to every `.lyr` buffer.
  *
  * `stdio` is the transport: the server owns those two streams for its whole lifetime, which is
  * also why nothing in it may print. A failure to start is reported once, through the client's own
@@ -162,11 +159,11 @@ function serverCommand() {
  * usable for reading code.
  */
 async function startClient() {
-    const command = serverCommand();
+    const command = executable();
 
     const server = {
-        run: { command, args: [], transport: TransportKind.stdio },
-        debug: { command, args: [], transport: TransportKind.stdio },
+        run: { command, args: ["lsp"], transport: TransportKind.stdio },
+        debug: { command, args: ["lsp"], transport: TransportKind.stdio },
     };
 
     const options = {
@@ -189,7 +186,7 @@ async function startClient() {
         }
         showStatus("failed");
         vscode.window.showWarningMessage(
-            `Lyric: the language server could not be started (${command}). ` +
+            `Lyric: the language server could not be started (${command} lsp). ` +
             `Diagnostics are off; highlighting and Ctrl+F5 still work. ${error.message}`
         );
     }
@@ -239,41 +236,28 @@ function scheduleRestart() {
     }, RestartDelayMs);
 }
 
-/**
- * Where `lyrdbg` lives: the same three-step rule as for `lyrls` — the explicit setting, then
- * beside a fully-qualified driver, then the PATH. One installation, one setting.
- */
-function adapterCommand() {
-    const configuration = vscode.workspace.getConfiguration("lyric");
-
-    const configured = (configuration.get("debugAdapter", "") || "").trim();
-    if (configured !== "") {
-        return configured;
+/** Saves the Lyric buffers with changes: the toolchain reads the files from disk, not the editor. */
+async function saveLyricBuffers() {
+    const dirty = vscode.workspace.textDocuments.filter((d) => d.languageId === "lyric" && d.isDirty);
+    for (const document of dirty) {
+        await document.save();
     }
-
-    const driver = (configuration.get("executable", "lyric") || "lyric").trim();
-    if (path.isAbsolute(driver)) {
-        const suffix = process.platform === "win32" ? ".exe" : "";
-        return path.join(path.dirname(driver), `lyrdbg${suffix}`);
-    }
-
-    return "lyrdbg";
 }
 
 /**
- * F5 without a launch.json debugs the active file. The adapter compiles from DISK, so a dirty
- * buffer is saved first — the same rule the run command applies, for the same reason: without it
- * the previous version runs, and under a debugger that is maximally confusing.
+ * F5 without a launch.json debugs the package of the active file, or the file where it belongs to
+ * none. The adapter builds from DISK, so the dirty buffers are saved first — the same rule the run
+ * command applies, for the same reason: without it the previous version runs, and under a
+ * debugger that is maximally confusing.
  */
 const debugConfigurationProvider = {
     async resolveDebugConfiguration(_folder, configuration) {
-        // Attaching debugs a program a host is ALREADY running. Nothing is compiled and nothing is
-        // started, so there is no file to save and no program to name — the whole configuration is
-        // where to connect.
+        // Attaching is lldb's: to a process by its id, or to the next one a program starts. Nothing
+        // is built, so there is nothing to save.
         if (configuration.request === "attach") {
-            if (!configuration.port) {
+            if (!configuration.pid && !configuration.program) {
                 vscode.window.showErrorMessage(
-                    "Lyric: an attach configuration needs the port its host serves the adapter on."
+                    "Lyric: an attach configuration names the process (pid) or the program to wait for."
                 );
                 return undefined;
             }
@@ -286,66 +270,44 @@ const debugConfigurationProvider = {
                 vscode.window.showErrorMessage("Lyric: no .lyr file is active to debug.");
                 return undefined;
             }
+            const file = editor.document.fileName;
             configuration.type = "lyric";
             configuration.request = "launch";
-            configuration.name = "Debug current file";
-            configuration.program = editor.document.fileName;
+            configuration.name = configuration.name || "Debug";
+            configuration.program = packageOf(file) ?? file;
         }
 
-        const editors = vscode.window.visibleTextEditors.filter(
-            (e) => e.document.languageId === "lyric" && e.document.isDirty
-        );
-        for (const editor of editors) {
-            await editor.document.save();
-        }
-
+        await saveLyricBuffers();
         return configuration;
     },
 };
 
-/**
- * Which adapter serves a session, and the two are not the same program.
- *
- * A launch starts `lyrdbg`, which compiles and runs the file. An attach connects to a host that is
- * already running one: there the adapter lives INSIDE that process, next to the program it is
- * debugging, and the only thing this end contributes is the socket.
- */
+/** Every session is `lyric dap`: it builds what a launch names and hands the rest to lldb-dap. */
 const debugAdapterFactory = {
-    createDebugAdapterDescriptor(session) {
-        if (session.configuration.request === "attach") {
-            return new vscode.DebugAdapterServer(
-                session.configuration.port,
-                session.configuration.host || "127.0.0.1"
-            );
-        }
-
-        return new vscode.DebugAdapterExecutable(adapterCommand(), []);
+    createDebugAdapterDescriptor() {
+        return new vscode.DebugAdapterExecutable(executable(), ["dap"]);
     },
 };
 
 /**
- * The build task: the project's own build.lyr, run by the driver, with the problem matcher
- * reading the compiler's diagnostics into the Problems panel.
+ * The build task: `lyric build` in the package's directory, with the problem matcher reading the
+ * compiler's diagnostics into the Problems panel.
  *
- * One task per workspace folder that carries a lyric.json — a folder without one has no project
- * to build, and offering the task there produces exactly the "no build.lyr found" the user did
- * not ask about.
+ * One task per workspace folder that carries a lyric.toml — a folder without one has no package
+ * to build, and offering the task there produces exactly the "no lyric.toml here" the user did not
+ * ask about.
  */
 function buildTask(definition, scope, cwd) {
-    const executable = vscode.workspace
-        .getConfiguration("lyric")
-        .get("executable", "lyric");
-
     const task = new vscode.Task(
         definition,
         scope,
         "build",
         "lyric",
-        new vscode.ShellExecution(executable, ["build"], { cwd }),
+        new vscode.ShellExecution(executable(), ["build"], { cwd }),
         "$lyric"
     );
     task.group = vscode.TaskGroup.Build;
-    task.detail = "lyric build — run the project's build.lyr";
+    task.detail = "lyric build — the package, its build.lyr first";
     return task;
 }
 
@@ -353,7 +315,7 @@ const taskProvider = {
     provideTasks() {
         const tasks = [];
         for (const folder of vscode.workspace.workspaceFolders ?? []) {
-            const manifest = vscode.Uri.joinPath(folder.uri, "lyric.json").fsPath;
+            const manifest = vscode.Uri.joinPath(folder.uri, "lyric.toml").fsPath;
             if (fs.existsSync(manifest)) {
                 tasks.push(buildTask({ type: "lyric" }, folder, folder.uri.fsPath));
             }
@@ -369,6 +331,60 @@ const taskProvider = {
         return buildTask(task.definition, scope, task.definition.projectDir ?? folder);
     },
 };
+
+/**
+ * What a test's lens runs: `lyric test -f <name>` in the package's directory, as a task, so its
+ * failures land in the Problems panel as a build's do. The server sends the package's directory
+ * and the test's name; nothing about tests is known here.
+ */
+async function runTest(root, name) {
+    const task = new vscode.Task(
+        { type: "lyric", projectDir: root },
+        vscode.TaskScope.Workspace,
+        `test ${name}`,
+        "lyric",
+        new vscode.ShellExecution(executable(), ["test", "-f", name], { cwd: root }),
+        "$lyric"
+    );
+    task.group = vscode.TaskGroup.Test;
+    await saveLyricBuffers();
+    return vscode.tasks.executeTask(task);
+}
+
+/** What the other lens runs: the same tests under the debugger, `test` in the launch. */
+function debugTest(root, name) {
+    const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root));
+    return vscode.debug.startDebugging(folder, {
+        type: "lyric",
+        request: "launch",
+        name: `Debug test ${name}`,
+        program: root,
+        test: name,
+    });
+}
+
+/**
+ * `lyric.expand` is the server's command — the client registers it from the server's capabilities
+ * — and answers the module with its macros expanded. This shows that answer beside the file.
+ */
+async function showExpanded() {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== "lyric") {
+        vscode.window.showErrorMessage("Lyric: no .lyr file is active.");
+        return;
+    }
+    if (client === null) {
+        vscode.window.showErrorMessage("Lyric: the language server is not running.");
+        return;
+    }
+    const result = await vscode.commands.executeCommand("lyric.expand", editor.document.uri.toString());
+    if (!result || result.refused) {
+        vscode.window.showErrorMessage(`Lyric: no expansion — ${result?.refused ?? "the server gave no answer"}`);
+        return;
+    }
+    const document = await vscode.workspace.openTextDocument({ language: "lyric", content: result.text });
+    await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: true });
+}
 
 function activate(context) {
     statusItem = vscode.languages.createLanguageStatusItem("lyric.server", {
@@ -399,25 +415,17 @@ function activate(context) {
             return;
         }
 
-        // Unsaved changes are written first: the compiler reads the file from disk, not from the
-        // editor buffer. Without this the previous version runs.
-        if (editor.document.isDirty) {
-            const saved = await editor.document.save();
-            if (!saved) {
-                vscode.window.showErrorMessage("Lyric: could not save the file before running.");
-                return;
-            }
-        }
+        // Unsaved changes are written first: the compiler reads the files from disk, not from the
+        // editor buffers. Without this the previous version runs.
+        await saveLyricBuffers();
 
-        const executable = vscode.workspace
-            .getConfiguration("lyric")
-            .get("executable", "lyric");
-
-        // The DRIVER, not lyrc or lyrvm: it is the one command that compiles and runs.
+        // A file of a package runs the package; a file of its own runs as a script.
+        const file = editor.document.fileName;
+        const root = packageOf(file);
         const shell = lyricTerminal();
         shell.show(true);
-        const file = quote(editor.document.fileName);
-        shell.sendText(`${callPrefix()}${quote(executable)} run ${file}`);
+        const what = root === null ? quote(file) : `-C ${quote(root)}`;
+        shell.sendText(`${callPrefix()}${quote(executable())} run ${what}`);
     });
 
     context.subscriptions.push(run);
@@ -426,6 +434,9 @@ function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand("lyric.restartServer", () => restart())
     );
+    context.subscriptions.push(vscode.commands.registerCommand("lyric.runTest", runTest));
+    context.subscriptions.push(vscode.commands.registerCommand("lyric.debugTest", debugTest));
+    context.subscriptions.push(vscode.commands.registerCommand("lyric.showExpanded", showExpanded));
 
     context.subscriptions.push(vscode.tasks.registerTaskProvider("lyric", taskProvider));
 

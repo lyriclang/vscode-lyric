@@ -1,17 +1,17 @@
 {
   "name": "vscode-lyric",
   "displayName": "Lyric",
-  "description": "Language support for Lyric: project-wide diagnostics, navigation, rename, semantic highlighting, build tasks, a run command, and a debugger that launches a file or attaches to a running host.",
-  "version": "1.4.0",
+  "description": "Language support for Lyric 5: the toolchain's language server (diagnostics, navigation, rename, quick fixes, formatting, test lenses), build tasks, a run command, and a debugger over lldb that builds what it launches.",
+  "version": "2.0.0",
   "publisher": "lyric",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/lyriclang/vscode-lyric" },
   "engines": { "vscode": "^1.80.0" },
-  "categories": ["Programming Languages"],
+  "categories": ["Programming Languages", "Debuggers"],
 
   "main": "./extension.js",
 
-  "activationEvents": ["onLanguage:lyric"],
+  "activationEvents": ["onLanguage:lyric", "workspaceContains:lyric.toml"],
 
   "contributes": {
     "languages": [
@@ -34,12 +34,24 @@
     "commands": [
       {
         "command": "lyric.run",
-        "title": "Lyric: Run File",
+        "title": "Lyric: Run",
         "icon": "$(play)"
       },
       {
         "command": "lyric.restartServer",
         "title": "Lyric: Restart Language Server"
+      },
+      {
+        "command": "lyric.showExpanded",
+        "title": "Lyric: Show the File with Its Macros Expanded"
+      },
+      {
+        "command": "lyric.runTest",
+        "title": "Lyric: Run Test"
+      },
+      {
+        "command": "lyric.debugTest",
+        "title": "Lyric: Debug Test"
       }
     ],
 
@@ -56,15 +68,20 @@
         "owner": "lyric",
         "source": "lyric",
         "fileLocation": ["autoDetect", "${workspaceFolder}"],
-        "pattern": {
-          "regexp": "^(.+):(\\d+):(\\d+): (error|warning)\\[([A-Z0-9-]+)\\]: (.+)$",
-          "file": 1,
-          "line": 2,
-          "column": 3,
-          "severity": 4,
-          "code": 5,
-          "message": 6
-        }
+        "pattern": [
+          {
+            "regexp": "^(error|warning)\\[([A-Z0-9-]+)\\]: (.+)$",
+            "severity": 1,
+            "code": 2,
+            "message": 3
+          },
+          {
+            "regexp": "^\\s*--> (.+):(\\d+):(\\d+)$",
+            "file": 1,
+            "line": 2,
+            "column": 3
+          }
+        ]
       }
     ],
 
@@ -77,37 +94,52 @@
         "languages": ["lyric"],
         "configurationAttributes": {
           "launch": {
-            "required": ["program"],
             "properties": {
               "program": {
                 "type": "string",
-                "description": "The .lyr file to debug (or a built .lyrbc). A source file is compiled by the debugger itself, unoptimized, so what runs is what the editor shows.",
-                "default": "${file}"
+                "description": "What to build and debug: a package's directory, or a .lyr file of its own. The adapter builds it in the debug profile first; what runs is what the editor shows.",
+                "default": "${workspaceFolder}"
+              },
+              "test": {
+                "type": "string",
+                "description": "Debug the package's tests whose names hold this text instead of its program — what a test's Debug lens sets."
               },
               "args": {
                 "type": "array",
                 "items": { "type": "string" },
-                "description": "Arguments handed to main(args: string[]).",
+                "description": "Arguments handed to the program.",
                 "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "The directory the program runs in. Defaults to the package's."
+              },
+              "env": {
+                "type": "object",
+                "description": "Environment variables for the program, beside the editor's."
               },
               "stopOnEntry": {
                 "type": "boolean",
-                "description": "Stop on the first line of main.",
+                "description": "Stop before the program's first instruction.",
                 "default": false
               }
             }
           },
           "attach": {
-            "required": ["port"],
             "properties": {
-              "port": {
-                "type": "number",
-                "description": "The port the host serves its debug adapter on. The host runs the program and speaks the protocol from inside its own process; nothing is compiled or started here."
+              "pid": {
+                "type": ["number", "string"],
+                "description": "The process to attach to.",
+                "default": "${command:pickProcess}"
               },
-              "host": {
+              "program": {
                 "type": "string",
-                "description": "Where that port is.",
-                "default": "127.0.0.1"
+                "description": "With waitFor: the binary whose next process to attach to."
+              },
+              "waitFor": {
+                "type": "boolean",
+                "description": "Wait for the next process of program to start.",
+                "default": false
               }
             }
           }
@@ -116,27 +148,37 @@
           {
             "type": "lyric",
             "request": "launch",
-            "name": "Debug current file",
-            "program": "${file}"
+            "name": "Debug the package",
+            "program": "${workspaceFolder}"
           }
         ],
         "configurationSnippets": [
           {
-            "label": "Lyric: Debug current file",
+            "label": "Lyric: Debug the package",
             "body": {
               "type": "lyric",
               "request": "launch",
-              "name": "Debug current file",
-              "program": "^\"\\${file}\""
+              "name": "Debug the package",
+              "program": "^\"\\${workspaceFolder}\""
             }
           },
           {
-            "label": "Lyric: Attach to a running host",
+            "label": "Lyric: Debug a test",
+            "body": {
+              "type": "lyric",
+              "request": "launch",
+              "name": "Debug a test",
+              "program": "^\"\\${workspaceFolder}\"",
+              "test": "${1:name}"
+            }
+          },
+          {
+            "label": "Lyric: Attach to a process",
             "body": {
               "type": "lyric",
               "request": "attach",
-              "name": "Attach to a running host",
-              "port": 4711
+              "name": "Attach to a process",
+              "pid": "^\"\\${command:pickProcess}\""
             }
           }
         ]
@@ -149,7 +191,7 @@
         "properties": {
           "projectDir": {
             "type": "string",
-            "description": "The directory whose build.lyr is run. Defaults to the workspace folder."
+            "description": "The package's directory, the one its lyric.toml stands in. Defaults to the workspace folder."
           }
         }
       }
@@ -170,6 +212,11 @@
           "when": "editorLangId == lyric",
           "group": "navigation"
         }
+      ],
+      "commandPalette": [
+        { "command": "lyric.runTest", "when": "false" },
+        { "command": "lyric.debugTest", "when": "false" },
+        { "command": "lyric.showExpanded", "when": "editorLangId == lyric" }
       ]
     },
 
@@ -179,17 +226,7 @@
         "lyric.executable": {
           "type": "string",
           "default": "lyric",
-          "markdownDescription": "Path to the `lyric` driver. Leave it as `lyric` if the toolchain is on your `PATH`; otherwise point at the published binary.\n\nThe extension calls the **driver**, not `lyrc` or `lyrvm` — the driver is the one command that compiles and runs in one step."
-        },
-        "lyric.languageServer": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Path to `lyrls`, the language server that produces the diagnostics.\n\nLeft empty it is looked for beside `#lyric.executable#` when that is a full path, and on your `PATH` otherwise — so in the usual case configuring the driver configures both."
-        },
-        "lyric.debugAdapter": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Path to `lyrdbg`, the debug adapter behind F5.\n\nLeft empty it is looked for beside `#lyric.executable#` when that is a full path, and on your `PATH` otherwise — the same rule the language server follows."
+          "markdownDescription": "Path to the `lyric` toolchain. Leave it as `lyric` if it is on your `PATH`; otherwise point at the binary.\n\nIt is the one program the extension starts: `lyric lsp` is the language server, `lyric dap` the debugger, and the run command and the tasks call its verbs."
         },
         "lyric.diagnostics.enable": {
           "type": "boolean",
