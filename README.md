@@ -62,12 +62,13 @@ A **panic** stops the program where it happens: the exception filter **Panic**, 
 next one `program` starts.
 
 The debugger needs **lldb-dap** — LLVM's, or Xcode's on macOS. `lyric dap` finds it on the
-`PATH` (`lldb-dap`, `lldb-dap-<version>`) or where `LYRIC_LLDB_DAP` names it. On Windows it is
-measured, not promised.
+`PATH` (`lldb-dap`, `lldb-dap-<version>`) or where `LYRIC_LLDB_DAP` — or `lyric.debug.lldbDap`
+— names it. On Windows it is measured, not promised.
 
 ## Setup
 
-The extension calls one program, `lyric`, from your `PATH`. Elsewhere, point at it:
+The extension calls one program, `lyric`, from your `PATH`. Elsewhere, point at it — the binary,
+or the directory that holds it:
 
 ```json
 {
@@ -76,9 +77,33 @@ The extension calls one program, `lyric`, from your `PATH`. Elsewhere, point at 
 ```
 
 Until Lyric 5.0 is released, the binary of the dev channel
-([the `dev` release](https://github.com/lyriclang/lyric/releases/tag/dev)) is called `lyric5`:
-point `lyric.executable` at it. `lyric.diagnostics.enable` turns the server off, leaving
-highlighting and `Ctrl+F5` in place.
+([the `dev` release](https://github.com/lyriclang/lyric/releases/tag/dev)) is called `lyric5`; it
+is taken on the `PATH` or in the directory named where no `lyric` is.
+
+| Setting | What it does |
+|---|---|
+| `lyric.executable` | The toolchain: `lyric lsp --stdio` is the server, `lyric dap` the debugger. |
+| `lyric.diagnostics.enable` | Off stops the server; highlighting and `Ctrl+F5` stay. |
+| `lyric.trace.server` | `messages` or `verbose` logs the protocol to the *Lyric Language Server* output. |
+| `lyric.run.profile` | `--profile` for `Ctrl+F5`, the build task and the *Run test* lens: `debug`, `release` or the manifest's. Empty leaves it to `LYRIC_PROFILE`, then `debug`. The debugger always builds `debug`. |
+| `lyric.run.arguments` | The program's arguments for `Ctrl+F5`, after `--`. |
+| `lyric.debug.lldbDap` | The `lldb-dap` for `lyric dap`, as `LYRIC_LLDB_DAP`. |
+
+Lyric 4's `lyric.languageServer` and `lyric.debugAdapter` are no longer read; a settings file that
+still holds one shows it struck through, and the extension says so once.
+
+Lints are the manifest's: `[lints]` in `lyric.toml` sets them for the editor and the command line
+alike. What the server offers is switched by VS Code's own settings for the language:
+
+```json
+{
+  "[lyric]": {
+    "editor.formatOnSave": true,
+    "editor.inlayHints.enabled": "offUnlessPressed",
+    "editor.codeLens": false
+  }
+}
+```
 
 ## Installing from a release
 

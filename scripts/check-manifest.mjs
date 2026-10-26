@@ -88,11 +88,31 @@ check(code.includes("save()"), "the run command does not save the buffer");
 
 // One binary is the toolchain: the server is 'lyric lsp', the debugger 'lyric dap'. Lyric 4's
 // separate tools are gone, and a client starting one of them starts nothing.
-check(code.includes('args: ["lsp"]'), "the language server is not started as 'lyric lsp'");
-check(code.includes('DebugAdapterExecutable(executable(), ["dap"])'), "the debugger is not started as 'lyric dap'");
-for (const gone of ["lyrls", "lyrdbg", "lyric.languageServer", "lyric.debugAdapter"]) {
+check(code.includes('args: ["lsp", "--stdio"]'), "the language server is not started as 'lyric lsp --stdio'");
+check(code.includes('DebugAdapterExecutable(executable(), ["dap"]'), "the debugger is not started as 'lyric dap'");
+for (const gone of ["lyrls", "lyrdbg"]) {
     check(!code.includes(gone), `the extension still names '${gone}'`);
 }
+
+// Lyric 4's settings for those tools stay declared, deprecated, so that a settings file holding one
+// says why it does nothing. The code names them in the one list that announces them — reading one
+// anywhere else would bring the separate binary back.
+const settings = contributes.configuration.properties;
+const retiredLines = code.split("\n").filter(line => line.includes("lyric.languageServer") || line.includes("lyric.debugAdapter"));
+check(retiredLines.length === 1 && retiredLines[0].includes("const RetiredSettings"),
+    "the retired settings are named outside RetiredSettings");
+for (const retired of ["lyric.languageServer", "lyric.debugAdapter"]) {
+    check(typeof settings[retired]?.markdownDeprecationMessage === "string",
+        `'${retired}' is not declared deprecated`);
+}
+
+// Every setting the code reads is declared, or it is a setting nobody can find in the UI. The
+// client reads `lyric.trace.server` by itself, through its id.
+for (const [, key] of code.matchAll(/\.get\("([a-zA-Z.]+)"/g)) {
+    check(`lyric.${key}` in settings, `the code reads 'lyric.${key}', which package.json does not declare`);
+}
+check(code.includes('new LanguageClient("lyric"'), "the client's id is not 'lyric', so it does not read lyric.trace.server");
+check("lyric.trace.server" in settings, "'lyric.trace.server' is not declared");
 
 // Both requests go to the one adapter: a launch builds what it names, an attach is lldb's.
 check(contributes.debuggers.length === 1, "exactly one debugger is expected");

@@ -2,7 +2,7 @@
   "name": "vscode-lyric",
   "displayName": "Lyric",
   "description": "Language support for Lyric 5: the toolchain's language server (diagnostics, navigation, rename, quick fixes, formatting, test lenses), build tasks, a run command, and a debugger over lldb that builds what it launches.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "publisher": "lyric",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/lyriclang/vscode-lyric" },
@@ -226,12 +226,50 @@
         "lyric.executable": {
           "type": "string",
           "default": "lyric",
-          "markdownDescription": "Path to the `lyric` toolchain. Leave it as `lyric` if it is on your `PATH`; otherwise point at the binary.\n\nIt is the one program the extension starts: `lyric lsp` is the language server, `lyric dap` the debugger, and the run command and the tasks call its verbs."
+          "markdownDescription": "Path to the `lyric` toolchain. Leave it as `lyric` if it is on your `PATH`; otherwise point at the binary, or at the directory that holds it.\n\nIt is the one program the extension starts: `lyric lsp` is the language server, `lyric dap` the debugger, and the run command and the tasks call its verbs. Until Lyric 5.0 is released the binary may be called `lyric5`; it is taken where no `lyric` is."
         },
         "lyric.diagnostics.enable": {
           "type": "boolean",
           "default": true,
           "description": "Run the language server and show diagnostics while you type. Turning it off leaves highlighting and the run command in place."
+        },
+        "lyric.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "markdownDescription": "Log the messages between the editor and `lyric lsp` to the *Lyric Language Server* output channel — what to attach to a report about the server."
+        },
+        "lyric.run.profile": {
+          "type": "string",
+          "default": "",
+          "examples": ["debug", "release"],
+          "scope": "resource",
+          "markdownDescription": "The profile `Lyric: Run`, the build task and a test's *Run* lens build with — `--profile`: `debug`, `release` or one of the manifest's. Left empty, the toolchain decides: `LYRIC_PROFILE`, then `debug`.\n\nThe debugger always builds in the `debug` profile."
+        },
+        "lyric.run.arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Arguments `Lyric: Run` hands to the program — what follows `--` in `lyric run`. A debug launch takes its own, in `args`."
+        },
+        "lyric.debug.lldbDap": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Path to the `lldb-dap` that `lyric dap` drives, handed to it as `LYRIC_LLDB_DAP`. Left empty, `lyric dap` looks on the `PATH` (`lldb-dap`, `lldb-dap-<version>`) and, on macOS, in Xcode."
+        },
+        "lyric.languageServer": {
+          "type": "string",
+          "default": "",
+          "markdownDeprecationMessage": "Lyric 4's `lyrls` is gone: the language server is `lyric lsp`, started from `#lyric.executable#`. This setting is no longer read; remove it."
+        },
+        "lyric.debugAdapter": {
+          "type": "string",
+          "default": "",
+          "markdownDeprecationMessage": "Lyric 4's `lyrdbg` is gone: the debugger is `lyric dap`, started from `#lyric.executable#`. This setting is no longer read; remove it."
         }
       }
     }
