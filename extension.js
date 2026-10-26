@@ -53,11 +53,69 @@ function callPrefix() {
 }
 
 /**
+ * The names the toolchain's binary goes by, in the order they are taken. Until 5.0 is released the
+ * dev channel's binary is `lyric5`; it is taken where no `lyric` is — the ladder the JetBrains
+ * plugin climbs. When the binary is `lyric` everywhere, `lyric5` goes.
+ */
+const BinaryNames = ["lyric", "lyric5"];
+
+/** A binary's file name on this system. */
+function binaryFile(name) {
+    return process.platform === "win32" ? `${name}.exe` : name;
+}
+
+function isFile(candidate) {
+    try {
+        return fs.statSync(candidate).isFile();
+    } catch {
+        return false;
+    }
+}
+
+/** Whether a bare name is found on the `PATH`, as the shell and `spawn` would look it up. */
+function onPath(name) {
+    const extensions = process.platform === "win32"
+        ? (process.env.PATHEXT || ".EXE").split(";").filter((e) => e.length > 0)
+        : [""];
+    return (process.env.PATH || "").split(path.delimiter).some((dir) =>
+        dir.length > 0 && extensions.some((ext) => isFile(path.join(dir, name + ext))));
+}
+
+/**
  * The toolchain: one binary, `lyric`, whose verbs are the compiler, the language server and the
- * debug adapter alike. One setting names it.
+ * debug adapter alike. One setting names it — the binary, or the directory that holds it, which is
+ * what the JetBrains plugin's setting names.
  */
 function executable() {
-    return (vscode.workspace.getConfiguration("lyric").get("executable", "lyric") || "lyric").trim();
+    const configured = (vscode.workspace.getConfiguration("lyric").get("executable", "lyric") || "lyric").trim();
+
+    let isDirectory = false;
+    try {
+        isDirectory = fs.statSync(configured).isDirectory();
+    } catch {
+        // Not there, or a bare name: neither is a directory.
+    }
+    if (isDirectory) {
+        const found = BinaryNames.map((name) => path.join(configured, binaryFile(name))).find(isFile);
+        return found ?? path.join(configured, binaryFile(BinaryNames[0]));
+    }
+
+    // The default is a bare name, left to the PATH; a `lyric5` there stands in for a missing `lyric`.
+    if (configured === BinaryNames[0]) {
+        return BinaryNames.find(onPath) ?? configured;
+    }
+    return configured;
+}
+
+/** The settings that apply to a file — a folder of the workspace may have its own. */
+function settingsFor(file) {
+    return vscode.workspace.getConfiguration("lyric", file ? vscode.Uri.file(file) : undefined);
+}
+
+/** `--profile <name>` where `lyric.run.profile` names one; nothing leaves it to the toolchain. */
+function profileArgs(file) {
+    const profile = (settingsFor(file).get("run.profile", "") || "").trim();
+    return profile.length > 0 ? ["--profile", profile] : [];
 }
 
 /**
@@ -146,6 +204,45 @@ const ServerSettings = [
     "lyric.diagnostics.enable",
 ];
 
+/**
+ * Lyric 4's settings for its separate server and debugger binaries. Lyric 5 has neither, so nothing
+ * reads them; package.json keeps them only to mark them deprecated where a settings file still
+ * holds one.
+ */
+const RetiredSettings = ["lyric.languageServer", "lyric.debugAdapter"];
+
+/**
+ * Says ONCE that a retired setting is no longer read. Without it a path set for Lyric 4 looks as if
+ * it still chose the server, and the user edits it in vain; repeated on every start it would be
+ * noise about a line in a file.
+ */
+function noticeRetiredSettings(context) {
+    const set = RetiredSettings.filter((name) => {
+        const value = vscode.workspace.getConfiguration().inspect(name);
+        return [value?.globalValue, value?.workspaceValue, value?.workspaceFolderValue]
+            .some((v) => typeof v === "string" && v.trim().length > 0);
+    });
+    const unsaid = set.filter((name) => !context.globalState.get(`retired:${name}`));
+    if (unsaid.length === 0) {
+        return;
+    }
+    for (const name of unsaid) {
+        context.globalState.update(`retired:${name}`, true);
+    }
+
+    vscode.window
+        .showInformationMessage(
+            `Lyric: ${unsaid.join(" and ")} ${unsaid.length === 1 ? "is" : "are"} no longer read. Lyric 5 is one binary: ` +
+            "the language server is `lyric lsp` and the debugger `lyric dap`, both from lyric.executable.",
+            "Open Settings"
+        )
+        .then((choice) => {
+            if (choice === "Open Settings") {
+                vscode.commands.executeCommand("workbench.action.openSettings", "lyric.executable");
+            }
+        });
+}
+
 function diagnosticsEnabled() {
     return vscode.workspace.getConfiguration("lyric").get("diagnostics.enable", true);
 }
@@ -162,9 +259,12 @@ async function startClient() {
     const command = executable();
 
     const server = {
-        run: { command, args: ["lsp"], transport: TransportKind.stdio },
-        debug: { command, args: ["lsp"], transport: TransportKind.stdio },
+        run: { command, args: ["lsp", "--stdio"], transport: TransportKind.stdio },
+        debug: { command, args: ["lsp", "--stdio"], transport: TransportKind.stdio },
     };
+
+    // The client's id is "lyric", so it reads `lyric.trace.server` by itself and follows its changes
+    // without a restart.
 
     const options = {
         documentSelector: [{ scheme: "file", language: "lyric" }],
@@ -186,7 +286,7 @@ async function startClient() {
         }
         showStatus("failed");
         vscode.window.showWarningMessage(
-            `Lyric: the language server could not be started (${command} lsp). ` +
+            `Lyric: the language server could not be started (${command} lsp --stdio). ` +
             `Diagnostics are off; highlighting and Ctrl+F5 still work. ${error.message}`
         );
     }
@@ -282,10 +382,16 @@ const debugConfigurationProvider = {
     },
 };
 
-/** Every session is `lyric dap`: it builds what a launch names and hands the rest to lldb-dap. */
+/**
+ * Every session is `lyric dap`: it builds what a launch names and hands the rest to lldb-dap.
+ * `lyric.debug.lldbDap` reaches it as `LYRIC_LLDB_DAP`, the toolchain's own way to name one; VS
+ * Code merges the variable into the editor's environment.
+ */
 const debugAdapterFactory = {
-    createDebugAdapterDescriptor() {
-        return new vscode.DebugAdapterExecutable(executable(), ["dap"]);
+    createDebugAdapterDescriptor(session) {
+        const lldbDap = (settingsFor(session.workspaceFolder?.uri.fsPath).get("debug.lldbDap", "") || "").trim();
+        const options = lldbDap.length > 0 ? { env: { LYRIC_LLDB_DAP: lldbDap } } : undefined;
+        return new vscode.DebugAdapterExecutable(executable(), ["dap"], options);
     },
 };
 
@@ -303,7 +409,7 @@ function buildTask(definition, scope, cwd) {
         scope,
         "build",
         "lyric",
-        new vscode.ShellExecution(executable(), ["build"], { cwd }),
+        new vscode.ShellExecution(executable(), ["build", ...profileArgs(cwd)], { cwd }),
         "$lyric"
     );
     task.group = vscode.TaskGroup.Build;
@@ -343,7 +449,7 @@ async function runTest(root, name) {
         vscode.TaskScope.Workspace,
         `test ${name}`,
         "lyric",
-        new vscode.ShellExecution(executable(), ["test", "-f", name], { cwd: root }),
+        new vscode.ShellExecution(executable(), ["test", ...profileArgs(root), "-f", name], { cwd: root }),
         "$lyric"
     );
     task.group = vscode.TaskGroup.Test;
@@ -397,6 +503,8 @@ function activate(context) {
     // seconds later cannot overlap.
     restart();
 
+    noticeRetiredSettings(context);
+
     // A changed path or a toggled switch has to reach a process that was started with the old one.
     // Restarting is the whole of it: the server holds no state that survives its own exit.
     context.subscriptions.push(
@@ -425,7 +533,10 @@ function activate(context) {
         const shell = lyricTerminal();
         shell.show(true);
         const what = root === null ? quote(file) : `-C ${quote(root)}`;
-        shell.sendText(`${callPrefix()}${quote(executable())} run ${what}`);
+        const profile = profileArgs(file).map((word) => ` ${quote(word)}`).join("");
+        const args = settingsFor(file).get("run.arguments", []) ?? [];
+        const program = args.length > 0 ? ` -- ${args.map((arg) => quote(String(arg))).join(" ")}` : "";
+        shell.sendText(`${callPrefix()}${quote(executable())} run ${what}${profile}${program}`);
     });
 
     context.subscriptions.push(run);
