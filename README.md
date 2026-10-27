@@ -23,6 +23,11 @@ what is wrong with a program.
 - **Test lenses**: above every `@Test` and doc-test, **Run test** runs `lyric test -f <name>` in
   the package's directory as a task, its failures in the Problems panel; **Debug test** debugs
   that test.
+- The **Test Explorer** lists the tests of every package in the workspace — by package and file,
+  as the server names them — and runs them with `lyric test --json`: each test passed, failed
+  with its panic, or skipped with its reason. A package, a file or a test runs on its own; Debug
+  starts `lyric dap` with the tests. The server knows a package's tests once it has analysed it,
+  which an open file of the package starts.
 - **Lyric: Show the File with Its Macros Expanded** opens the module as the compiler reads it
   after its macros, beside the file.
 - **Highlighting** in two layers: the TextMate grammar colors what is lexical — it is made from
@@ -30,12 +35,19 @@ what is wrong with a program.
   the same —, and the server's **semantic tokens** color every name by what the compiler resolved
   it to.
 - **Run** with `Ctrl+F5`: the package of the active file, or the file where it belongs to none.
-- **Build** through the task system: a folder with a `lyric.toml` offers `lyric: build`, the
-  compiler's diagnostics in the Problems panel.
+  Of a package with several programs (`[[bin]]`) it runs the file's own where the file is one's
+  entry, else the one **Lyric: Select Program** chose, else `src/main.lyr`'s, as the toolchain
+  does; F5 debugs the same. The programs are what `lyric metadata` says.
+- **Tasks**: a folder with a `lyric.toml` offers `lyric: build`, `check`, `test`, `fmt --check`
+  and `fix`, the compiler's diagnostics in the Problems panel. In tasks.json, `"command"` names
+  the verb; without it the task is the build.
+- **Lyric: Select Profile** sets `lyric.run.profile` from the package's profiles — the built-in
+  ones and its manifest's; a status item beside the server's shows it.
 - **Snippets** for the declaration forms, a test, `match` and the loops — each checked against
   the toolchain's `check` in CI.
 - A **status item** says whether the server runs and which version; clicking it after a failed
-  start retries, as `Lyric: Restart Language Server` does.
+  start retries, as `Lyric: Restart Language Server` does. A toolchain older than the extension
+  is written for (`5.0.0-dev.20261026`) is said once, and the server runs anyway.
 
 ## Debugging
 

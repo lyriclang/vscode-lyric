@@ -2,7 +2,7 @@
   "name": "vscode-lyric",
   "displayName": "Lyric",
   "description": "Language support for Lyric 5: the toolchain's language server (diagnostics, navigation, rename, quick fixes, formatting, test lenses), build tasks, a run command, and a debugger over lldb that builds what it launches.",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "publisher": "lyric",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/lyriclang/vscode-lyric" },
@@ -52,6 +52,14 @@
       {
         "command": "lyric.debugTest",
         "title": "Lyric: Debug Test"
+      },
+      {
+        "command": "lyric.selectProgram",
+        "title": "Lyric: Select Program"
+      },
+      {
+        "command": "lyric.selectProfile",
+        "title": "Lyric: Select Profile"
       }
     ],
 
@@ -97,7 +105,7 @@
             "properties": {
               "program": {
                 "type": "string",
-                "description": "What to build and debug: a package's directory, or a .lyr file of its own. The adapter builds it in the debug profile first; what runs is what the editor shows.",
+                "description": "What to build and debug: a package's directory, the entry file of one of its programs, or a .lyr file of its own. The adapter builds it in the debug profile first; what runs is what the editor shows.",
                 "default": "${workspaceFolder}"
               },
               "test": {
@@ -189,6 +197,12 @@
       {
         "type": "lyric",
         "properties": {
+          "command": {
+            "type": "string",
+            "enum": ["build", "check", "test", "fmt --check", "fix"],
+            "default": "build",
+            "description": "The verb the task runs in the package's directory. Without it the task is the build."
+          },
           "projectDir": {
             "type": "string",
             "description": "The package's directory, the one its lyric.toml stands in. Defaults to the workspace folder."
