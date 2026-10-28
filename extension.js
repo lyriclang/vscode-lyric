@@ -4,7 +4,8 @@
 // the problem matcher. The code here is the run command, the task provider, the status items, the
 // commands the server's lenses name, the choice of program and profile from `lyric metadata`, and
 // the two processes of the toolchain it starts: `lyric lsp`, where everything language-aware
-// happens, and `lyric dap`, the debugger. The Test Explorer is testing.js.
+// happens, and `lyric dap`, the debugger. The Test Explorer is testing.js; the commands about a
+// package besides building it — new, add, explain, env, doc, api — are commands.js.
 //
 // Nothing about the language is computed here. The client starts the server, forwards the open
 // buffers to it and renders what comes back — the compiler is the only thing that decides what
@@ -17,6 +18,7 @@ const path = require("path");
 const vscode = require("vscode");
 const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
 const { createTesting } = require("./testing");
+const { createCommands } = require("./commands");
 
 /** The Test Explorer's controller, once the extension is active. */
 let testing = null;
@@ -657,7 +659,9 @@ const debugAdapterFactory = {
 /**
  * The verbs offered as tasks, each run in the package's directory. Those that build take
  * `lyric.run.profile`; `fmt` and `fix` have no profile. `fmt --check` prints the files that would
- * change, one to a line, which no problem matcher reads.
+ * change, one to a line, which no problem matcher reads. `bench` builds in the release profile
+ * unless told otherwise, so it keeps the toolchain's choice; a tasks.json entry names the files of
+ * `--save` and `--compare`.
  */
 const TaskVerbs = {
     "build": { args: ["build"], profile: true, matcher: "$lyric", group: vscode.TaskGroup.Build, detail: "lyric build — the package, its build.lyr first" },
@@ -665,6 +669,7 @@ const TaskVerbs = {
     "test": { args: ["test"], profile: true, matcher: "$lyric", group: vscode.TaskGroup.Test, detail: "lyric test — every test of the package" },
     "fmt --check": { args: ["fmt", "--check"], profile: false, matcher: [], detail: "lyric fmt --check — the files the formatter would change, none written" },
     "fix": { args: ["fix"], profile: false, matcher: "$lyric", detail: "lyric fix — the safe changes the findings suggest, written into the files" },
+    "bench": { args: ["bench"], profile: false, matcher: "$lyric", options: { save: "--save", compare: "--compare" }, detail: "lyric bench — every benchmark of the package, in the release profile" },
 };
 
 /**
@@ -683,6 +688,11 @@ function lyricTask(definition, scope, cwd) {
         return undefined;
     }
     const args = [...verb.args, ...(verb.profile ? profileArgs(cwd) : [])];
+    for (const [property, option] of Object.entries(verb.options ?? {})) {
+        if (typeof definition[property] === "string" && definition[property].length > 0) {
+            args.push(option, definition[property]);
+        }
+    }
     const task = new vscode.Task(
         definition,
         scope,
@@ -808,6 +818,8 @@ function activate(context) {
         saveLyricBuffers,
         debugTest,
     });
+
+    createCommands(context, { executable, profileArgs, readMetadata, activePackage, samePath });
 
     // Through the same chain the setting changes use, so the first start and a restart triggered
     // seconds later cannot overlap.

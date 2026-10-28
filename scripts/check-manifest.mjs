@@ -132,10 +132,23 @@ for (const command of ["lyric.runTest", "lyric.debugTest"]) {
 // registered here too would collide with it.
 check(!code.includes('registerCommand("lyric.expand"'), "'lyric.expand' is the server's command, not the client's");
 
+// The commands about a package besides building it are a file of their own, loaded by the
+// extension.
+const commandsPath = join(root, "commands.js");
+check(existsSync(commandsPath), "commands.js is missing");
+check(code.includes('require("./commands")'), "the extension does not load commands.js");
+const commands = existsSync(commandsPath) ? readFileSync(commandsPath, "utf8") : "";
+
 // Every command the palette shows is registered, or it is an entry that does nothing.
 for (const command of declared) {
-    check(code.includes(`registerCommand("${command}"`), `'${command}' is declared but not registered`);
+    check(code.includes(`registerCommand("${command}"`) || commands.includes(`registerCommand("${command}"`),
+        `'${command}' is declared but not registered`);
 }
+
+// The explanation is the toolchain's catalog, the one the server links: the action that offers
+// it runs the command that asks `lyric explain`.
+check(commands.includes('["explain", '), "the explanation does not ask 'lyric explain'");
+check(commands.includes('command: "lyric.explain"'), "no code action offers the explanation");
 
 // Every verb a tasks.json may name is one the task provider knows: a name it does not know
 // resolves to no task, silently.

@@ -38,9 +38,27 @@ what is wrong with a program.
   Of a package with several programs (`[[bin]]`) it runs the file's own where the file is one's
   entry, else the one **Lyric: Select Program** chose, else `src/main.lyr`'s, as the toolchain
   does; F5 debugs the same. The programs are what `lyric metadata` says.
-- **Tasks**: a folder with a `lyric.toml` offers `lyric: build`, `check`, `test`, `fmt --check`
-  and `fix`, the compiler's diagnostics in the Problems panel. In tasks.json, `"command"` names
-  the verb; without it the task is the build.
+- **Tasks**: a folder with a `lyric.toml` offers `lyric: build`, `check`, `test`, `fmt --check`,
+  `fix` and `bench`, the compiler's diagnostics in the Problems panel. In tasks.json, `"command"`
+  names the verb; without it the task is the build. `bench` builds in the release profile, as the
+  toolchain does, and takes `"save"` and `"compare"`, the files of `--save` and `--compare`.
+- **Lyric: New Package** (`lyric new`) makes a program's or a library's package in a directory of
+  its own and opens it; **Lyric: Make a Package of a Folder** (`lyric init`) makes one where the
+  folder is.
+- **Lyric: Add Dependency**, **Remove Dependency** and **Update Dependencies** are `lyric add` —
+  a directory, or a git repository at its default branch, a tag, a branch or a commit —,
+  `lyric remove` and `lyric update`: the toolchain writes the manifest and reads the graph, and
+  what it refuses is said.
+- **Explain**: a finding the catalog has a page for offers **Explain** beside its quick fixes —
+  `lyric explain` of the installed toolchain, with a wrong and a right program, beside the
+  editor and offline; **Lyric: Explain a Diagnostic Code** asks for any code or lint.
+- **Lyric: Show the Toolchain's Environment** is `lyric env`: every setting a build of the
+  package reads, its value and where it comes from — the command line, a `LYRIC_*` variable,
+  `lyric.toml` or the default —, with the profile `lyric.run.profile` names.
+- **Lyric: Build the Documentation** writes `lyric doc`'s reference under `out/doc/` and opens it
+  in the browser; **Lyric: Compare the Public API with a Revision** runs `lyric api --diff <rev>`,
+  the breaking changes first; **Lyric: Clean** removes `out/`. Their output is in the *Lyric*
+  output channel.
 - **Lyric: Select Profile** sets `lyric.run.profile` from the package's profiles — the built-in
   ones and its manifest's; a status item beside the server's shows it.
 - **Snippets** for the declaration forms, a test, `match` and the loops — each checked against
@@ -156,8 +174,9 @@ Nothing is compiled or bundled: the grammar is JSON and the extension one JavaSc
 
 - `scripts/check-manifest.mjs`: every path the manifest names exists, grammar and language agree
   on the scope, every key binding and menu entry points at a declared command, the commands the
-  server's lenses name are registered, the server is `lyric lsp` and the debugger `lyric dap`,
-  and the run command stays quoted with PowerShell's call operator.
+  server's lenses name are registered, every declared command is registered and every task verb
+  known, the server is `lyric lsp` and the debugger `lyric dap`, and the run command stays quoted
+  with PowerShell's call operator.
 - `grammar-sync`: `syntaxes/lyric.tmLanguage.json` is the file tree-sitter-lyric makes.
 - `snippets`: each snippet, filled with its defaults, passes `lyric check` of the dev channel
   (`scripts/check-snippets.mjs`).
