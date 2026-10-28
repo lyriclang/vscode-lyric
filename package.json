@@ -2,7 +2,7 @@
   "name": "vscode-lyric",
   "displayName": "Lyric",
   "description": "Language support for Lyric 5: the toolchain's language server (diagnostics, navigation, rename, quick fixes, formatting, test lenses), build tasks, a run command, and a debugger over lldb that builds what it launches.",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "publisher": "lyric",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/lyriclang/vscode-lyric" },
@@ -60,6 +60,46 @@
       {
         "command": "lyric.selectProfile",
         "title": "Lyric: Select Profile"
+      },
+      {
+        "command": "lyric.newPackage",
+        "title": "Lyric: New Package"
+      },
+      {
+        "command": "lyric.initPackage",
+        "title": "Lyric: Make a Package of a Folder"
+      },
+      {
+        "command": "lyric.addDependency",
+        "title": "Lyric: Add Dependency"
+      },
+      {
+        "command": "lyric.removeDependency",
+        "title": "Lyric: Remove Dependency"
+      },
+      {
+        "command": "lyric.updateDependencies",
+        "title": "Lyric: Update Dependencies"
+      },
+      {
+        "command": "lyric.explain",
+        "title": "Lyric: Explain a Diagnostic Code"
+      },
+      {
+        "command": "lyric.showEnvironment",
+        "title": "Lyric: Show the Toolchain's Environment"
+      },
+      {
+        "command": "lyric.buildDocumentation",
+        "title": "Lyric: Build the Documentation"
+      },
+      {
+        "command": "lyric.checkApi",
+        "title": "Lyric: Compare the Public API with a Revision"
+      },
+      {
+        "command": "lyric.clean",
+        "title": "Lyric: Clean"
       }
     ],
 
@@ -199,13 +239,21 @@
         "properties": {
           "command": {
             "type": "string",
-            "enum": ["build", "check", "test", "fmt --check", "fix"],
+            "enum": ["build", "check", "test", "fmt --check", "fix", "bench"],
             "default": "build",
             "description": "The verb the task runs in the package's directory. Without it the task is the build."
           },
           "projectDir": {
             "type": "string",
             "description": "The package's directory, the one its lyric.toml stands in. Defaults to the workspace folder."
+          },
+          "save": {
+            "type": "string",
+            "description": "bench only: the file the run's times are written to (--save)."
+          },
+          "compare": {
+            "type": "string",
+            "description": "bench only: the file of an earlier --save each time is compared with (--compare)."
           }
         }
       }
