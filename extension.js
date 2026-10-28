@@ -1,19 +1,25 @@
 // The Lyric extension for VS Code.
 //
 // The parts that need no code are declared in package.json: the TextMate grammar, the snippets,
-// the problem matcher. The code here is the run command, the build task provider, a status item,
-// the commands the server's lenses name, and the two processes of the toolchain it starts:
-// `lyric lsp`, where everything language-aware happens, and `lyric dap`, the debugger.
+// the problem matcher. The code here is the run command, the task provider, the status items, the
+// commands the server's lenses name, the choice of program and profile from `lyric metadata`, and
+// the two processes of the toolchain it starts: `lyric lsp`, where everything language-aware
+// happens, and `lyric dap`, the debugger. The Test Explorer is testing.js.
 //
 // Nothing about the language is computed here. The client starts the server, forwards the open
 // buffers to it and renders what comes back — the compiler is the only thing that decides what
 // is wrong with a program, and a second opinion in JavaScript would be a second answer to the
 // same question.
 
+const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const vscode = require("vscode");
 const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
+const { createTesting } = require("./testing");
+
+/** The Test Explorer's controller, once the extension is active. */
+let testing = null;
 
 /** The terminal that runs are sent to: one, not one per invocation. */
 let terminal = null;
@@ -136,6 +142,169 @@ function packageOf(file) {
     }
 }
 
+function samePath(a, b) {
+    const norm = (p) => path.resolve(p);
+    return process.platform === "win32"
+        ? norm(a).toLowerCase() === norm(b).toLowerCase()
+        : norm(a) === norm(b);
+}
+
+/**
+ * What `lyric metadata --json` says of a package — its programs, profiles and targets —, kept by
+ * its directory for as long as its manifest is unchanged. A failure is not kept: the next ask
+ * tries again, after the toolchain or the manifest was put right.
+ */
+const metadataCache = new Map();
+
+function readMetadata(root) {
+    let stamp;
+    try {
+        stamp = fs.statSync(path.join(root, "lyric.toml")).mtimeMs;
+    } catch {
+        return Promise.resolve(null);
+    }
+    const cached = metadataCache.get(root);
+    if (cached && cached.stamp === stamp) {
+        return cached.result;
+    }
+
+    const result = new Promise((resolve) => {
+        childProcess.execFile(executable(), ["metadata", "--json"], { cwd: root, timeout: 30000, windowsHide: true },
+            (error, stdout) => {
+                let parsed = null;
+                if (!error) {
+                    try {
+                        parsed = JSON.parse(stdout);
+                    } catch {
+                        // Not the document the schema describes: as if there were none.
+                    }
+                }
+                if (parsed === null) {
+                    metadataCache.delete(root);
+                }
+                resolve(parsed);
+            });
+    });
+    metadataCache.set(root, { stamp, result });
+    return result;
+}
+
+/**
+ * Which of the package's programs a run or a debug session is about: null where the package has
+ * one or none, or the toolchain could not say — the toolchain then decides —, undefined where the
+ * choice was declined.
+ *
+ * The file's own program where the file is one's entry; else the one chosen for the package with
+ * `Lyric: Select Program`; else the toolchain's own choice, `src/main.lyr`'s; asked only where the
+ * package has none of that. `ask` asks in any case.
+ */
+async function programFor(root, file, ask = false) {
+    const programs = (await readMetadata(root))?.programs ?? [];
+    if (programs.length <= 1) {
+        return null;
+    }
+    const key = `program:${root}`;
+    if (!ask) {
+        const own = programs.find((program) => samePath(program.entry, file));
+        if (own) {
+            return own;
+        }
+        const kept = programs.find((program) => program.name === extensionContext.workspaceState.get(key));
+        if (kept) {
+            return kept;
+        }
+        const main = programs.find((program) => samePath(program.entry, path.join(root, "src", "main.lyr")));
+        if (main) {
+            return main;
+        }
+    }
+    const picked = await vscode.window.showQuickPick(
+        programs.map((program) => ({
+            label: program.name,
+            description: path.relative(root, program.entry).replace(/\\/g, "/"),
+            program,
+        })),
+        { placeHolder: "The program of the package to run and debug" }
+    );
+    if (!picked) {
+        return undefined;
+    }
+    await extensionContext.workspaceState.update(key, picked.program.name);
+    return picked.program;
+}
+
+/** The package of the active Lyric file, or of the first workspace folder that is one. */
+function activePackage() {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && editor.document.languageId === "lyric") {
+        const root = packageOf(editor.document.fileName);
+        if (root !== null) {
+            return { root, file: editor.document.fileName };
+        }
+    }
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+        if (fs.existsSync(path.join(folder.uri.fsPath, "lyric.toml"))) {
+            return { root: folder.uri.fsPath, file: null };
+        }
+    }
+    return null;
+}
+
+/** `Lyric: Select Program` — the choice `Ctrl+F5` and F5 keep for the package. */
+async function selectProgram() {
+    const active = activePackage();
+    if (active === null) {
+        vscode.window.showErrorMessage("Lyric: no package is open — a lyric.toml in the workspace, or a file of one.");
+        return;
+    }
+    const program = await programFor(active.root, active.file ?? active.root, true);
+    if (program === null) {
+        vscode.window.showInformationMessage("Lyric: the package has one program; there is nothing to choose.");
+    }
+}
+
+/**
+ * `Lyric: Select Profile` — `lyric.run.profile` from the profiles the package has: the built-in
+ * ones and its manifest's. Written where the package's folder keeps its settings.
+ */
+async function selectProfile() {
+    const active = activePackage();
+    const profiles = active === null ? [] : ((await readMetadata(active.root))?.profiles ?? []);
+    const items = [
+        { label: "Toolchain default", description: "LYRIC_PROFILE, then debug", value: "" },
+        ...profiles.map((profile) => ({
+            label: profile.name,
+            description: profile.base && profile.base !== profile.name ? `from ${profile.base}` : undefined,
+            value: profile.name,
+        })),
+    ];
+    if (profiles.length === 0) {
+        items.push({ label: "debug", value: "debug" }, { label: "release", value: "release" });
+    }
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: "The profile Ctrl+F5, the tasks and the tests build with" });
+    if (!picked) {
+        return;
+    }
+    const uri = active ? vscode.Uri.file(active.root) : undefined;
+    const target = uri && vscode.workspace.getWorkspaceFolder(uri)
+        ? vscode.ConfigurationTarget.WorkspaceFolder
+        : vscode.workspace.workspaceFolders ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+    await vscode.workspace.getConfiguration("lyric", uri).update("run.profile", picked.value, target);
+}
+
+/** Says which profile the package builds with; clicking it chooses another. */
+let profileItem = null;
+
+function showProfile() {
+    if (profileItem === null) {
+        return;
+    }
+    const active = activePackage();
+    const profile = (settingsFor(active?.root).get("run.profile", "") || "").trim();
+    profileItem.text = `Profile: ${profile.length > 0 ? profile : "default"}`;
+    profileItem.detail = "Ctrl+F5, the tasks and the tests";
+}
+
 /** The running language client, or null when diagnostics are off or the server did not start. */
 let client = null;
 
@@ -243,6 +412,77 @@ function noticeRetiredSettings(context) {
         });
 }
 
+/**
+ * The oldest toolchain this client is written for: the first whose server names a file's tests
+ * (`lyric/tests`) and whose `test` and `metadata` speak JSON. Raised when the client starts to rely
+ * on something newer.
+ */
+const MinimumToolchain = "5.0.0-dev.20261026";
+
+/** The extension's context, for what it remembers between sessions. */
+let extensionContext = null;
+
+/**
+ * A version's parts: `5.0.0-dev.20261026+b78950e` is the numbers 5, 0, 0 and the pre-release
+ * `dev`, 20261026; what follows `+` names the build and does not order. Null for a text that is no
+ * version.
+ */
+function parseVersion(text) {
+    const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/.exec((text ?? "").trim());
+    if (!match) {
+        return null;
+    }
+    return { core: [Number(match[1]), Number(match[2]), Number(match[3])], pre: match[4] ? match[4].split(".") : [] };
+}
+
+/** Orders two versions as semantic versioning does: a release after its pre-releases. */
+function compareVersions(a, b) {
+    for (let i = 0; i < 3; i++) {
+        if (a.core[i] !== b.core[i]) {
+            return a.core[i] - b.core[i];
+        }
+    }
+    if (a.pre.length === 0 || b.pre.length === 0) {
+        return b.pre.length - a.pre.length;
+    }
+    for (let i = 0; i < Math.min(a.pre.length, b.pre.length); i++) {
+        const [x, y] = [a.pre[i], b.pre[i]];
+        const [nx, ny] = [/^\d+$/.test(x), /^\d+$/.test(y)];
+        if (nx && ny && Number(x) !== Number(y)) {
+            return Number(x) - Number(y);
+        }
+        if (nx !== ny) {
+            return nx ? -1 : 1;
+        }
+        if (!nx && x !== y) {
+            return x < y ? -1 : 1;
+        }
+    }
+    return a.pre.length - b.pre.length;
+}
+
+/**
+ * Says once per toolchain version that it is older than the client is written for. The server
+ * still runs: an older one answers most of what is asked, and refusing it would take the
+ * diagnostics with the parts it lacks.
+ */
+function checkVersion(version) {
+    const found = parseVersion(version);
+    const minimum = parseVersion(MinimumToolchain);
+    if (found === null || compareVersions(found, minimum) >= 0 || extensionContext === null) {
+        return;
+    }
+    const key = `older-toolchain:${version}`;
+    if (extensionContext.globalState.get(key)) {
+        return;
+    }
+    extensionContext.globalState.update(key, true);
+    vscode.window.showWarningMessage(
+        `Lyric: the toolchain is ${version}; this extension is written for ${MinimumToolchain} or newer. ` +
+        "The Test Explorer and the program choice may not work with it."
+    );
+}
+
 function diagnosticsEnabled() {
     return vscode.workspace.getConfiguration("lyric").get("diagnostics.enable", true);
 }
@@ -269,6 +509,14 @@ async function startClient() {
     const options = {
         documentSelector: [{ scheme: "file", language: "lyric" }],
         outputChannelName: "Lyric Language Server",
+        middleware: {
+            // Pushed findings mean an analysis of a package ended: the tests it holds may have
+            // changed with it.
+            handleDiagnostics(uri, diagnostics, next) {
+                next(uri, diagnostics);
+                testing?.scheduleRefresh();
+            },
+        },
     };
 
     const starting = new LanguageClient("lyric", "Lyric Language Server", server, options);
@@ -279,7 +527,10 @@ async function startClient() {
     // the next stop once this handshake is finished.
     try {
         await starting.start();
-        showStatus("running", starting.initializeResult?.serverInfo?.version);
+        const version = starting.initializeResult?.serverInfo?.version;
+        showStatus("running", version);
+        checkVersion(version);
+        testing?.scheduleRefresh();
     } catch (error) {
         if (client === starting) {
             client = null;
@@ -374,7 +625,15 @@ const debugConfigurationProvider = {
             configuration.type = "lyric";
             configuration.request = "launch";
             configuration.name = configuration.name || "Debug";
-            configuration.program = packageOf(file) ?? file;
+
+            // A package of several programs is debugged by the entry of the one it runs: the
+            // adapter builds the program that starts at a file.
+            const root = packageOf(file);
+            const program = root === null ? null : await programFor(root, file);
+            if (program === undefined) {
+                return undefined;
+            }
+            configuration.program = program?.entry ?? root ?? file;
         }
 
         await saveLyricBuffers();
@@ -396,24 +655,46 @@ const debugAdapterFactory = {
 };
 
 /**
- * The build task: `lyric build` in the package's directory, with the problem matcher reading the
- * compiler's diagnostics into the Problems panel.
+ * The verbs offered as tasks, each run in the package's directory. Those that build take
+ * `lyric.run.profile`; `fmt` and `fix` have no profile. `fmt --check` prints the files that would
+ * change, one to a line, which no problem matcher reads.
+ */
+const TaskVerbs = {
+    "build": { args: ["build"], profile: true, matcher: "$lyric", group: vscode.TaskGroup.Build, detail: "lyric build — the package, its build.lyr first" },
+    "check": { args: ["check"], profile: true, matcher: "$lyric", group: vscode.TaskGroup.Build, detail: "lyric check — what build says, without making a binary" },
+    "test": { args: ["test"], profile: true, matcher: "$lyric", group: vscode.TaskGroup.Test, detail: "lyric test — every test of the package" },
+    "fmt --check": { args: ["fmt", "--check"], profile: false, matcher: [], detail: "lyric fmt --check — the files the formatter would change, none written" },
+    "fix": { args: ["fix"], profile: false, matcher: "$lyric", detail: "lyric fix — the safe changes the findings suggest, written into the files" },
+};
+
+/**
+ * A task of the package: the verb in its directory, with the problem matcher reading the compiler's
+ * diagnostics into the Problems panel. A tasks.json entry without `command` is the build, as it
+ * was before there were others.
  *
- * One task per workspace folder that carries a lyric.toml — a folder without one has no package
- * to build, and offering the task there produces exactly the "no lyric.toml here" the user did not
+ * One set per workspace folder that carries a lyric.toml — a folder without one has no package
+ * to build, and offering the tasks there produces exactly the "no lyric.toml here" the user did not
  * ask about.
  */
-function buildTask(definition, scope, cwd) {
+function lyricTask(definition, scope, cwd) {
+    const name = definition.command ?? "build";
+    const verb = TaskVerbs[name];
+    if (verb === undefined) {
+        return undefined;
+    }
+    const args = [...verb.args, ...(verb.profile ? profileArgs(cwd) : [])];
     const task = new vscode.Task(
         definition,
         scope,
-        "build",
+        name,
         "lyric",
-        new vscode.ShellExecution(executable(), ["build", ...profileArgs(cwd)], { cwd }),
-        "$lyric"
+        new vscode.ShellExecution(executable(), args, { cwd }),
+        verb.matcher
     );
-    task.group = vscode.TaskGroup.Build;
-    task.detail = "lyric build — the package, its build.lyr first";
+    if (verb.group) {
+        task.group = verb.group;
+    }
+    task.detail = verb.detail;
     return task;
 }
 
@@ -423,7 +704,9 @@ const taskProvider = {
         for (const folder of vscode.workspace.workspaceFolders ?? []) {
             const manifest = vscode.Uri.joinPath(folder.uri, "lyric.toml").fsPath;
             if (fs.existsSync(manifest)) {
-                tasks.push(buildTask({ type: "lyric" }, folder, folder.uri.fsPath));
+                for (const command of Object.keys(TaskVerbs)) {
+                    tasks.push(lyricTask({ type: "lyric", command }, folder, folder.uri.fsPath));
+                }
             }
         }
         return tasks;
@@ -434,7 +717,7 @@ const taskProvider = {
     resolveTask(task) {
         const scope = task.scope ?? vscode.TaskScope.Workspace;
         const folder = typeof scope === "object" ? scope.uri.fsPath : undefined;
-        return buildTask(task.definition, scope, task.definition.projectDir ?? folder);
+        return lyricTask(task.definition, scope, task.definition.projectDir ?? folder);
     },
 };
 
@@ -493,11 +776,38 @@ async function showExpanded() {
 }
 
 function activate(context) {
+    extensionContext = context;
+
     statusItem = vscode.languages.createLanguageStatusItem("lyric.server", {
         language: "lyric",
     });
     statusItem.command = { command: "lyric.restartServer", title: "Restart" };
     context.subscriptions.push(statusItem);
+
+    profileItem = vscode.languages.createLanguageStatusItem("lyric.profile", { language: "lyric" });
+    profileItem.command = { command: "lyric.selectProfile", title: "Select" };
+    context.subscriptions.push(profileItem);
+    showProfile();
+    context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor(showProfile),
+        vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration("lyric.run.profile")) {
+                showProfile();
+            }
+            // Another toolchain may read the packages otherwise.
+            if (event.affectsConfiguration("lyric.executable")) {
+                metadataCache.clear();
+            }
+        })
+    );
+
+    testing = createTesting(context, {
+        executable,
+        profileArgs,
+        client: () => client,
+        saveLyricBuffers,
+        debugTest,
+    });
 
     // Through the same chain the setting changes use, so the first start and a restart triggered
     // seconds later cannot overlap.
@@ -527,12 +837,20 @@ function activate(context) {
         // editor buffers. Without this the previous version runs.
         await saveLyricBuffers();
 
-        // A file of a package runs the package; a file of its own runs as a script.
+        // A file of a package runs the package — of several programs, the file's own or the one
+        // chosen —; a file of its own runs as a script.
         const file = editor.document.fileName;
         const root = packageOf(file);
+        let what = quote(file);
+        if (root !== null) {
+            const chosen = await programFor(root, file);
+            if (chosen === undefined) {
+                return;
+            }
+            what = `-C ${quote(root)}${chosen ? ` --bin ${quote(chosen.name)}` : ""}`;
+        }
         const shell = lyricTerminal();
         shell.show(true);
-        const what = root === null ? quote(file) : `-C ${quote(root)}`;
         const profile = profileArgs(file).map((word) => ` ${quote(word)}`).join("");
         const args = settingsFor(file).get("run.arguments", []) ?? [];
         const program = args.length > 0 ? ` -- ${args.map((arg) => quote(String(arg))).join(" ")}` : "";
@@ -548,6 +866,8 @@ function activate(context) {
     context.subscriptions.push(vscode.commands.registerCommand("lyric.runTest", runTest));
     context.subscriptions.push(vscode.commands.registerCommand("lyric.debugTest", debugTest));
     context.subscriptions.push(vscode.commands.registerCommand("lyric.showExpanded", showExpanded));
+    context.subscriptions.push(vscode.commands.registerCommand("lyric.selectProgram", selectProgram));
+    context.subscriptions.push(vscode.commands.registerCommand("lyric.selectProfile", selectProfile));
 
     context.subscriptions.push(vscode.tasks.registerTaskProvider("lyric", taskProvider));
 

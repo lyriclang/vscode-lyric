@@ -132,5 +132,27 @@ for (const command of ["lyric.runTest", "lyric.debugTest"]) {
 // registered here too would collide with it.
 check(!code.includes('registerCommand("lyric.expand"'), "'lyric.expand' is the server's command, not the client's");
 
+// Every command the palette shows is registered, or it is an entry that does nothing.
+for (const command of declared) {
+    check(code.includes(`registerCommand("${command}"`), `'${command}' is declared but not registered`);
+}
+
+// Every verb a tasks.json may name is one the task provider knows: a name it does not know
+// resolves to no task, silently.
+const taskVerbs = contributes.taskDefinitions[0].properties.command?.enum ?? [];
+check(taskVerbs.length > 0, "the task definition names no verbs");
+for (const verb of taskVerbs) {
+    check(code.includes(`"${verb}": {`), `the task verb '${verb}' has no entry in TaskVerbs`);
+}
+
+// The Test Explorer is a file of its own: it must exist, be what the extension loads, and ask
+// the server by the request the server answers.
+const testingPath = join(root, "testing.js");
+check(existsSync(testingPath), "testing.js is missing");
+check(code.includes('require("./testing")'), "the extension does not load testing.js");
+const testing = existsSync(testingPath) ? readFileSync(testingPath, "utf8") : "";
+check(testing.includes('"lyric/tests"'), "the Test Explorer does not ask the server for 'lyric/tests'");
+check(testing.includes('"test", "--json"'), "the Test Explorer does not run 'lyric test --json'");
+
 if (failures > 0) process.exit(1);
 console.log("manifest checks passed");
