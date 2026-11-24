@@ -1,8 +1,8 @@
 {
   "name": "vscode-lyric",
   "displayName": "Lyric",
-  "description": "Language support for Lyric 5: the toolchain's language server (diagnostics, navigation, rename, quick fixes, formatting, test lenses), build tasks, a run command, and a debugger over lldb that builds what it launches.",
-  "version": "2.3.0",
+  "description": "Language support for the Lyric family. Lyric 5 (.lyr): the toolchain's language server (diagnostics, navigation, rename, quick fixes, formatting, test lenses), build tasks, a run command, and a debugger over lldb that builds what it launches. Lyric-Script (.lyrs): the language and a run command, its language server to come.",
+  "version": "2.4.0",
   "publisher": "lyric",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/lyriclang/vscode-lyric" },
@@ -11,7 +11,12 @@
 
   "main": "./extension.js",
 
-  "activationEvents": ["onLanguage:lyric", "workspaceContains:lyric.toml"],
+  "activationEvents": [
+    "onLanguage:lyric",
+    "onLanguage:lyric-script",
+    "workspaceContains:lyric.toml",
+    "workspaceContains:lyric-script.toml"
+  ],
 
   "contributes": {
     "languages": [
@@ -19,6 +24,12 @@
         "id": "lyric",
         "aliases": ["Lyric", "lyric"],
         "extensions": [".lyr"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "lyric-script",
+        "aliases": ["Lyric-Script", "lyric-script"],
+        "extensions": [".lyrs"],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -263,7 +274,7 @@
       {
         "command": "lyric.run",
         "key": "ctrl+f5",
-        "when": "editorLangId == lyric"
+        "when": "editorLangId == lyric || editorLangId == lyric-script"
       }
     ],
 
@@ -271,7 +282,7 @@
       "editor/title/run": [
         {
           "command": "lyric.run",
-          "when": "editorLangId == lyric",
+          "when": "editorLangId == lyric || editorLangId == lyric-script",
           "group": "navigation"
         }
       ],
@@ -316,6 +327,20 @@
           "default": [],
           "scope": "resource",
           "markdownDescription": "Arguments `Lyric: Run` hands to the program — what follows `--` in `lyric run`. A debug launch takes its own, in `args`."
+        },
+        "lyric.script.executable": {
+          "type": "string",
+          "default": "lyric-script",
+          "markdownDescription": "Path to Lyric-Script's toolchain, `lyric-script`, for `.lyrs` files. Leave it as `lyric-script` if it is on your `PATH`; otherwise point at the binary, or at the directory that holds it.\n\n`Lyric: Run` calls its `run`. Its language server, `lyric-script lsp`, comes with Lyric-Script's tools."
+        },
+        "lyric.script.run.arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Arguments `Lyric: Run` hands to a `.lyrs` script — what follows the file in `lyric-script run`."
         },
         "lyric.debug.lldbDap": {
           "type": "string",
