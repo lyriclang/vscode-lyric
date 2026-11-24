@@ -1,11 +1,16 @@
-// The Lyric extension for VS Code.
+// The extension of the Lyric family for VS Code: Lyric 5's `.lyr` files and Lyric-Script's `.lyrs`.
 //
-// The parts that need no code are declared in package.json: the TextMate grammar, the snippets,
-// the problem matcher. The code here is the run command, the task provider, the status items, the
-// commands the server's lenses name, the choice of program and profile from `lyric metadata`, and
-// the two processes of the toolchain it starts: `lyric lsp`, where everything language-aware
-// happens, and `lyric dap`, the debugger. The Test Explorer is testing.js; the commands about a
-// package besides building it — new, add, explain, env, doc, api — are commands.js.
+// The parts that need no code are declared in package.json: the languages, the TextMate grammar,
+// the snippets, the problem matcher. The code here is the run command, the task provider, the
+// status items, the commands the server's lenses name, the choice of program and profile from
+// `lyric metadata`, and the two processes of the toolchain it starts: `lyric lsp`, where everything
+// language-aware happens, and `lyric dap`, the debugger. The language servers are servers.js; the
+// Test Explorer is testing.js; the commands about a package besides building it — new, add,
+// explain, env, doc, api — are commands.js.
+//
+// Lyric-Script is its own toolchain, `lyric-script`. Until its tools come (its S12: the language
+// server, the debugger, its grammar) a `.lyrs` file is a language the editor knows and Ctrl+F5
+// runs — nothing more.
 //
 // Nothing about the language is computed here. The client starts the server, forwards the open
 // buffers to it and renders what comes back — the compiler is the only thing that decides what
@@ -16,7 +21,7 @@ const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const vscode = require("vscode");
-const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
+const { createServer } = require("./servers");
 const { createTesting } = require("./testing");
 const { createCommands } = require("./commands");
 
@@ -111,6 +116,22 @@ function executable() {
     // The default is a bare name, left to the PATH; a `lyric5` there stands in for a missing `lyric`.
     if (configured === BinaryNames[0]) {
         return BinaryNames.find(onPath) ?? configured;
+    }
+    return configured;
+}
+
+/**
+ * Lyric-Script's toolchain: one binary, `lyric-script`, with verbs like Lyric 5's (Lyric-Script
+ * design 12). `lyric.script.executable` names it — the binary, or the directory that holds it.
+ */
+function scriptExecutable() {
+    const configured = (vscode.workspace.getConfiguration("lyric").get("script.executable", "lyric-script") || "lyric-script").trim();
+    try {
+        if (fs.statSync(configured).isDirectory()) {
+            return path.join(configured, binaryFile("lyric-script"));
+        }
+    } catch {
+        // Not there, or a bare name left to the PATH.
     }
     return configured;
 }
@@ -307,74 +328,6 @@ function showProfile() {
     profileItem.detail = "Ctrl+F5, the tasks and the tests";
 }
 
-/** The running language client, or null when diagnostics are off or the server did not start. */
-let client = null;
-
-/**
- * The one visible answer to "is the server running". Without it a failed start is a warning
- * toast that disappears, and the user reads the silence as "no diagnostics today" with no way to
- * tell why or to retry. Clicking it restarts.
- */
-let statusItem = null;
-
-function showStatus(state, detail) {
-    if (statusItem === null) {
-        return;
-    }
-
-    statusItem.busy = state === "starting";
-    statusItem.severity = state === "failed"
-        ? vscode.LanguageStatusSeverity.Error
-        : vscode.LanguageStatusSeverity.Information;
-
-    switch (state) {
-        case "starting":
-            statusItem.text = "Lyric: starting";
-            statusItem.detail = "the language server is coming up";
-            break;
-        case "running":
-            statusItem.text = detail ? `Lyric ${detail}` : "Lyric";
-            statusItem.detail = "language server running";
-            break;
-        case "failed":
-            statusItem.text = "Lyric: server failed";
-            statusItem.detail = "diagnostics are off; click to retry";
-            break;
-        case "off":
-            statusItem.text = "Lyric: diagnostics off";
-            statusItem.detail = "enable lyric.diagnostics.enable to start the server";
-            break;
-    }
-}
-
-/**
- * Restarts run STRICTLY ONE AFTER ANOTHER.
- *
- * Without the chain a stop can overtake the start it is meant to undo: `start()` resolves only
- * after the initialize handshake, and a `stop()` issued before then rejects the request that is
- * still in flight — the client reports that as "pending response rejected since connection got
- * disposed", which names the symptom and not the cause.
- */
-let restarts = Promise.resolve();
-
-/** The restart a burst of setting changes has coming. */
-let restartTimer = null;
-
-/**
- * How long the settings must be quiet before the server is restarted.
- *
- * The settings UI fires a change PER KEYSTROKE, so typing a path is a dozen of them. Restarting on
- * each one spawns and kills a process per character, and every one of those kills lands on an
- * unanswered handshake.
- */
-const RestartDelayMs = 750;
-
-/** The settings that decide what the server is and whether it runs. */
-const ServerSettings = [
-    "lyric.executable",
-    "lyric.diagnostics.enable",
-];
-
 /**
  * Lyric 4's settings for its separate server and debugger binaries. Lyric 5 has neither, so nothing
  * reads them; package.json keeps them only to mark them deprecated where a settings file still
@@ -485,113 +438,13 @@ function checkVersion(version) {
     );
 }
 
-function diagnosticsEnabled() {
-    return vscode.workspace.getConfiguration("lyric").get("diagnostics.enable", true);
-}
+/** Lyric 5's language server, once the extension is active. */
+let lyricServer = null;
 
-/**
- * Starts `lyric lsp` and connects it to every `.lyr` buffer.
- *
- * `stdio` is the transport: the server owns those two streams for its whole lifetime, which is
- * also why nothing in it may print. A failure to start is reported once, through the client's own
- * output channel, rather than as a modal — an editor that cannot find a toolchain should still be
- * usable for reading code.
- */
-async function startClient() {
-    const command = executable();
-
-    const server = {
-        run: { command, args: ["lsp", "--stdio"], transport: TransportKind.stdio },
-        debug: { command, args: ["lsp", "--stdio"], transport: TransportKind.stdio },
-    };
-
-    // The client's id is "lyric", so it reads `lyric.trace.server` by itself and follows its changes
-    // without a restart.
-
-    const options = {
-        documentSelector: [{ scheme: "file", language: "lyric" }],
-        outputChannelName: "Lyric Language Server",
-        middleware: {
-            // Pushed findings mean an analysis of a package ended: the tests it holds may have
-            // changed with it.
-            handleDiagnostics(uri, diagnostics, next) {
-                next(uri, diagnostics);
-                testing?.scheduleRefresh();
-            },
-        },
-    };
-
-    const starting = new LanguageClient("lyric", "Lyric Language Server", server, options);
-    client = starting;
-    showStatus("starting");
-
-    // Awaited rather than left running: the caller is the restart chain, and it may only proceed to
-    // the next stop once this handshake is finished.
-    try {
-        await starting.start();
-        const version = starting.initializeResult?.serverInfo?.version;
-        showStatus("running", version);
-        checkVersion(version);
-        testing?.scheduleRefresh();
-    } catch (error) {
-        if (client === starting) {
-            client = null;
-        }
-        showStatus("failed");
-        vscode.window.showWarningMessage(
-            `Lyric: the language server could not be started (${command} lsp --stdio). ` +
-            `Diagnostics are off; highlighting and Ctrl+F5 still work. ${error.message}`
-        );
-    }
-}
-
-async function stopClient() {
-    const stopping = client;
-    client = null;
-    if (stopping === null) {
-        return;
-    }
-
-    try {
-        await stopping.stop();
-    } catch {
-        // A client that never reached the running state rejects instead of stopping. Disposing it
-        // releases the process either way, and a failure to shut down cleanly must not block the
-        // restart that follows.
-        try {
-            await stopping.dispose();
-        } catch {
-            // The process is gone. Nothing left to release.
-        }
-    }
-}
-
-/** Queues one stop-then-start behind whatever is already running. */
-function restart() {
-    restarts = restarts.then(async () => {
-        await stopClient();
-        if (diagnosticsEnabled()) {
-            await startClient();
-        } else {
-            showStatus("off");
-        }
-    });
-    return restarts;
-}
-
-function scheduleRestart() {
-    if (restartTimer !== null) {
-        clearTimeout(restartTimer);
-    }
-    restartTimer = setTimeout(() => {
-        restartTimer = null;
-        restart();
-    }, RestartDelayMs);
-}
-
-/** Saves the Lyric buffers with changes: the toolchain reads the files from disk, not the editor. */
-async function saveLyricBuffers() {
-    const dirty = vscode.workspace.textDocuments.filter((d) => d.languageId === "lyric" && d.isDirty);
+/** Saves the buffers of a language with changes: the toolchain reads the files from disk, not the
+ * editor. Lyric 5's by default. */
+async function saveLyricBuffers(language = "lyric") {
+    const dirty = vscode.workspace.textDocuments.filter((d) => d.languageId === language && d.isDirty);
     for (const document of dirty) {
         await document.save();
     }
@@ -772,7 +625,7 @@ async function showExpanded() {
         vscode.window.showErrorMessage("Lyric: no .lyr file is active.");
         return;
     }
-    if (client === null) {
+    if (lyricServer?.client() == null) {
         vscode.window.showErrorMessage("Lyric: the language server is not running.");
         return;
     }
@@ -787,12 +640,6 @@ async function showExpanded() {
 
 function activate(context) {
     extensionContext = context;
-
-    statusItem = vscode.languages.createLanguageStatusItem("lyric.server", {
-        language: "lyric",
-    });
-    statusItem.command = { command: "lyric.restartServer", title: "Restart" };
-    context.subscriptions.push(statusItem);
 
     profileItem = vscode.languages.createLanguageStatusItem("lyric.profile", { language: "lyric" });
     profileItem.command = { command: "lyric.selectProfile", title: "Select" };
@@ -811,10 +658,35 @@ function activate(context) {
         })
     );
 
+    // The language servers, one per language of the family. Lyric-Script's `lyric-script lsp`
+    // joins here with its S12, as a second createServer beside this one.
+    lyricServer = createServer(context, {
+        id: "lyric",
+        language: "lyric",
+        title: "Lyric",
+        command: executable,
+        enabled: () => vscode.workspace.getConfiguration("lyric").get("diagnostics.enable", true),
+        enableSetting: "lyric.diagnostics.enable",
+        settings: ["lyric.executable", "lyric.diagnostics.enable"],
+        restartCommand: "lyric.restartServer",
+        middleware: {
+            // Pushed findings mean an analysis of a package ended: the tests it holds may have
+            // changed with it.
+            handleDiagnostics(uri, diagnostics, next) {
+                next(uri, diagnostics);
+                testing?.scheduleRefresh();
+            },
+        },
+        started(client, version) {
+            checkVersion(version);
+            testing?.scheduleRefresh();
+        },
+    });
+
     testing = createTesting(context, {
         executable,
         profileArgs,
-        client: () => client,
+        client: () => lyricServer.client(),
         saveLyricBuffers,
         debugTest,
     });
@@ -823,57 +695,56 @@ function activate(context) {
 
     // Through the same chain the setting changes use, so the first start and a restart triggered
     // seconds later cannot overlap.
-    restart();
+    lyricServer.restart();
 
     noticeRetiredSettings(context);
 
-    // A changed path or a toggled switch has to reach a process that was started with the old one.
-    // Restarting is the whole of it: the server holds no state that survives its own exit.
-    context.subscriptions.push(
-        vscode.workspace.onDidChangeConfiguration((event) => {
-            if (!ServerSettings.some((setting) => event.affectsConfiguration(setting))) {
-                return;
-            }
-            scheduleRestart();
-        })
-    );
-
     const run = vscode.commands.registerCommand("lyric.run", async () => {
         const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.languageId !== "lyric") {
-            vscode.window.showErrorMessage("Lyric: no .lyr file is active.");
+        const language = editor?.document.languageId;
+        if (language !== "lyric" && language !== "lyric-script") {
+            vscode.window.showErrorMessage("Lyric: no .lyr or .lyrs file is active.");
             return;
         }
 
         // Unsaved changes are written first: the compiler reads the files from disk, not from the
         // editor buffers. Without this the previous version runs.
-        await saveLyricBuffers();
+        await saveLyricBuffers(language);
 
-        // A file of a package runs the package — of several programs, the file's own or the one
-        // chosen —; a file of its own runs as a script.
         const file = editor.document.fileName;
-        const root = packageOf(file);
-        let what = quote(file);
-        if (root !== null) {
-            const chosen = await programFor(root, file);
-            if (chosen === undefined) {
-                return;
+        let call;
+        if (language === "lyric-script") {
+            // A Lyric-Script file runs as it is: `lyric-script run FILE ARG…`, everything after the
+            // file the script's. A right it needs is asked for in the terminal.
+            const args = settingsFor(file).get("script.run.arguments", []) ?? [];
+            call = `${quote(scriptExecutable())} run ${quote(file)}${args.map((arg) => ` ${quote(String(arg))}`).join("")}`;
+        } else {
+            // A file of a package runs the package — of several programs, the file's own or the one
+            // chosen —; a file of its own runs as a script.
+            const root = packageOf(file);
+            let what = quote(file);
+            if (root !== null) {
+                const chosen = await programFor(root, file);
+                if (chosen === undefined) {
+                    return;
+                }
+                what = `-C ${quote(root)}${chosen ? ` --bin ${quote(chosen.name)}` : ""}`;
             }
-            what = `-C ${quote(root)}${chosen ? ` --bin ${quote(chosen.name)}` : ""}`;
+            const profile = profileArgs(file).map((word) => ` ${quote(word)}`).join("");
+            const args = settingsFor(file).get("run.arguments", []) ?? [];
+            const program = args.length > 0 ? ` -- ${args.map((arg) => quote(String(arg))).join(" ")}` : "";
+            call = `${quote(executable())} run ${what}${profile}${program}`;
         }
         const shell = lyricTerminal();
         shell.show(true);
-        const profile = profileArgs(file).map((word) => ` ${quote(word)}`).join("");
-        const args = settingsFor(file).get("run.arguments", []) ?? [];
-        const program = args.length > 0 ? ` -- ${args.map((arg) => quote(String(arg))).join(" ")}` : "";
-        shell.sendText(`${callPrefix()}${quote(executable())} run ${what}${profile}${program}`);
+        shell.sendText(`${callPrefix()}${call}`);
     });
 
     context.subscriptions.push(run);
 
     // The way out of a hung or updated server that does not cost a window reload.
     context.subscriptions.push(
-        vscode.commands.registerCommand("lyric.restartServer", () => restart())
+        vscode.commands.registerCommand("lyric.restartServer", () => lyricServer.restart())
     );
     context.subscriptions.push(vscode.commands.registerCommand("lyric.runTest", runTest));
     context.subscriptions.push(vscode.commands.registerCommand("lyric.debugTest", debugTest));
@@ -892,11 +763,6 @@ function activate(context) {
 }
 
 function deactivate() {
-    if (restartTimer !== null) {
-        clearTimeout(restartTimer);
-        restartTimer = null;
-    }
-
     // The terminal is ours, so it is disposed here; VS Code would otherwise leave it orphaned when
     // the extension reloads.
     if (terminal !== null) {
@@ -904,13 +770,10 @@ function deactivate() {
         terminal = null;
     }
 
-    // Behind the chain rather than beside it: a restart may still be starting a client, and
-    // stopping one mid-handshake is the very thing the chain exists to prevent.
-    //
     // Returned rather than awaited: VS Code waits on the promise, and the server needs that time
     // for the shutdown handshake. Without it the process is killed and the exit code says the
     // client vanished, which is what a crashed editor is supposed to look like.
-    return restarts.then(stopClient);
+    return lyricServer?.shutdown();
 }
 
 module.exports = { activate, deactivate };

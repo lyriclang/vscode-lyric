@@ -43,10 +43,16 @@ check(grammar.scopeName === contributed.scopeName,
     `the grammar's scopeName '${grammar.scopeName}' differs from the contributed '${contributed.scopeName}'`);
 check(contributed.language === "lyric", "the grammar is not wired to the 'lyric' language");
 
-// The extension claims the file extension the language uses.
-check(contributes.languages.length === 1, "exactly one language is expected");
-check(contributes.languages[0].extensions.includes(".lyr"),
-    "the language does not claim '.lyr'");
+// The extension is the family's: Lyric 5 claims '.lyr', Lyric-Script '.lyrs' (Lyric-Script design
+// 12, Ed), each under its own language id.
+const languages = new Map(contributes.languages.map(l => [l.id, l]));
+check(contributes.languages.length === 2, "exactly two languages are expected, lyric and lyric-script");
+check(languages.get("lyric")?.extensions.includes(".lyr"), "the language 'lyric' does not claim '.lyr'");
+check(languages.get("lyric-script")?.extensions.includes(".lyrs"),
+    "the language 'lyric-script' does not claim '.lyrs'");
+for (const id of languages.keys()) {
+    check(manifest.activationEvents.includes(`onLanguage:${id}`), `the extension does not activate on '${id}'`);
+}
 
 // A key binding or menu entry pointing at a command that does not exist is a menu item that does
 // nothing.
@@ -60,20 +66,22 @@ for (const items of Object.values(contributes.menus)) {
     for (const item of items) mustBeDeclared(item);
 }
 
-// The run command calls the toolchain's 'run'. The CALL LINE is checked rather than the file: a
-// check scanning the whole file trips over the comments that explain it.
+// The run command calls the toolchain's 'run' — `lyric run` for a '.lyr' file, `lyric-script run`
+// for a '.lyrs' one. The CALL LINES are checked rather than the file: a check scanning the whole
+// file trips over the comments that explain it.
 const code = readFileSync(join(root, "extension.js"), "utf8");
 const callLines = code.split("\n").filter(line => line.includes("sendText"));
 check(callLines.length === 1, "exactly one line is expected to call sendText");
 const call = callLines[0] ?? "";
-check(call.includes(" run "), "the call line does not run the file");
 
 // The command is QUOTED and called with an '&' in PowerShell — both together, because each alone
 // is broken. Without the quoting 'C:\Program Files\lyric\lyric.exe' fails at 'C:\Program';
 // without the '&', '"lyric" run x' is a string literal in PowerShell that gets printed rather
 // than executed, so the run simply did not happen.
-check(call.includes("quote(executable())"), "the executable is not quoted on the call line");
 check(call.includes("callPrefix()"), "the call line lost the PowerShell call operator");
+for (const binary of ["executable()", "scriptExecutable()"]) {
+    check(code.includes(`\`\${quote(${binary})} run `), `the run of ${binary} is not quoted, or does not run`);
+}
 
 // And the '&' applies to PowerShell only: in cmd.exe and every POSIX shell it would be a syntax
 // error.
@@ -87,8 +95,13 @@ check(code.includes("isDirty"), "the run command does not look at isDirty");
 check(code.includes("save()"), "the run command does not save the buffer");
 
 // One binary is the toolchain: the server is 'lyric lsp', the debugger 'lyric dap'. Lyric 4's
-// separate tools are gone, and a client starting one of them starts nothing.
-check(code.includes('args: ["lsp", "--stdio"]'), "the language server is not started as 'lyric lsp --stdio'");
+// separate tools are gone, and a client starting one of them starts nothing. The servers are
+// servers.js, one per language of the family.
+const serversPath = join(root, "servers.js");
+check(existsSync(serversPath), "servers.js is missing");
+check(code.includes('require("./servers")'), "the extension does not load servers.js");
+const servers = existsSync(serversPath) ? readFileSync(serversPath, "utf8") : "";
+check(servers.includes('args: ["lsp", "--stdio"]'), "a language server is not started as '<binary> lsp --stdio'");
 check(code.includes('DebugAdapterExecutable(executable(), ["dap"]'), "the debugger is not started as 'lyric dap'");
 for (const gone of ["lyrls", "lyrdbg"]) {
     check(!code.includes(gone), `the extension still names '${gone}'`);
@@ -111,7 +124,8 @@ for (const retired of ["lyric.languageServer", "lyric.debugAdapter"]) {
 for (const [, key] of code.matchAll(/\.get\("([a-zA-Z.]+)"/g)) {
     check(`lyric.${key}` in settings, `the code reads 'lyric.${key}', which package.json does not declare`);
 }
-check(code.includes('new LanguageClient("lyric"'), "the client's id is not 'lyric', so it does not read lyric.trace.server");
+check(servers.includes("new LanguageClient(spec.id,"), "a client's id is not its server's, so it does not read <id>.trace.server");
+check(code.includes('id: "lyric",'), "Lyric 5's server is not 'lyric', so it does not read lyric.trace.server");
 check("lyric.trace.server" in settings, "'lyric.trace.server' is not declared");
 
 // Both requests go to the one adapter: a launch builds what it names, an attach is lldb's.

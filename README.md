@@ -1,9 +1,16 @@
 # Lyric for VS Code
 
-Language support for [Lyric](https://github.com/lyriclang/lyric) 5: the toolchain's language
-server, a run command, build tasks and a debugger. From 2.0.0 the extension speaks to Lyric 5's
-one binary — `lyric lsp` and `lyric dap`; Lyric 4's `lyrls` and `lyrdbg` belong to
-[Lyric-Script](https://github.com/lyriclang/lyric-script), and 1.4.0 is the release for them.
+Language support for the Lyric family:
+
+- [Lyric](https://github.com/lyriclang/lyric) 5, `.lyr`: the toolchain's language server, a run
+  command, build tasks and a debugger. From 2.0.0 the extension speaks to Lyric 5's one binary —
+  `lyric lsp` and `lyric dap`.
+- [Lyric-Script](https://github.com/lyriclang/lyric-script), `.lyrs`: the language and a run
+  command, from 2.4.0. Its language server, debugger and grammar come with Lyric-Script's tools
+  (its milestone S12), as `lyric-script lsp` beside `lyric lsp` — one extension, two servers by
+  file extension.
+
+Lyric 4's `lyrls` and `lyrdbg` are gone; 1.4.0 is the release of this extension for them.
 
 The extension knows nothing about Lyric the server does not say: it starts the toolchain,
 forwards the open buffers and shows what comes back. The compiler is the only thing that decides
@@ -66,6 +73,18 @@ what is wrong with a program.
 - A **status item** says whether the server runs and which version; clicking it after a failed
   start retries, as `Lyric: Restart Language Server` does. A toolchain older than the extension
   is written for (`5.0.0-dev.20261026`) is said once, and the server runs anyway.
+
+## Lyric-Script
+
+A `.lyrs` file is the language `lyric-script`, with comments, brackets and indentation as in
+Lyric 5, and no highlighting yet: its grammar is to be made from `tree-sitter-lyric-script`.
+**Run** with `Ctrl+F5` calls `lyric-script run <file>`; the arguments of `lyric.script.run.arguments`
+follow the file, and a right the script needs (`file`, `net`, …) is asked for in the terminal.
+
+| Setting | What it does |
+|---|---|
+| `lyric.script.executable` | Lyric-Script's toolchain, `lyric-script` — the binary, or the directory that holds it. |
+| `lyric.script.run.arguments` | The script's arguments for `Ctrl+F5`, after the file. |
 
 ## Debugging
 
@@ -172,11 +191,11 @@ Nothing is compiled or bundled: the grammar is JSON and the extension one JavaSc
 
 ## What CI checks
 
-- `scripts/check-manifest.mjs`: every path the manifest names exists, grammar and language agree
-  on the scope, every key binding and menu entry points at a declared command, the commands the
-  server's lenses name are registered, every declared command is registered and every task verb
-  known, the server is `lyric lsp` and the debugger `lyric dap`, and the run command stays quoted
-  with PowerShell's call operator.
+- `scripts/check-manifest.mjs`: every path the manifest names exists, `lyric` claims `.lyr` and
+  `lyric-script` `.lyrs`, grammar and language agree on the scope, every key binding and menu
+  entry points at a declared command, the commands the server's lenses name are registered, every
+  declared command is registered and every task verb known, a server is `<binary> lsp` and the
+  debugger `lyric dap`, and both run commands stay quoted with PowerShell's call operator.
 - `grammar-sync`: `syntaxes/lyric.tmLanguage.json` is the file tree-sitter-lyric makes.
 - `snippets`: each snippet, filled with its defaults, passes `lyric check` of the dev channel
   (`scripts/check-snippets.mjs`).
